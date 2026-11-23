@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models.dart';
 import 'grenade_type_icon.dart';
 
+/// 可多选的道具列表项卡片，用于导出与批量删除选择。
 class SelectableGrenadeListItem extends StatelessWidget {
   final Grenade grenade;
   final bool selected;
@@ -31,6 +32,7 @@ class SelectableGrenadeListItem extends StatelessWidget {
     final mapName = layer?.map.value?.name ?? '-';
     final hasImpact =
         grenade.impactXRatio != null && grenade.impactYRatio != null;
+    final author = grenade.author?.trim();
 
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
@@ -72,28 +74,7 @@ class SelectableGrenadeListItem extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                        if (hasImpact)
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: Colors.green.withValues(alpha: 0.16),
-                              borderRadius: BorderRadius.circular(999),
-                            ),
-                            child: const Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.my_location,
-                                    size: 10, color: Colors.green),
-                                SizedBox(width: 2),
-                                Text(
-                                  '爆点',
-                                  style: TextStyle(
-                                      fontSize: 10, color: Colors.green),
-                                ),
-                              ],
-                            ),
-                          ),
+                        if (hasImpact) const _ImpactBadge(),
                       ],
                     ),
                     const SizedBox(height: 6),
@@ -103,12 +84,8 @@ class SelectableGrenadeListItem extends StatelessWidget {
                       children: [
                         _MetaText(icon: Icons.map_outlined, text: mapName),
                         _MetaText(icon: Icons.layers_outlined, text: layerName),
-                        if (grenade.author != null &&
-                            grenade.author!.trim().isNotEmpty)
-                          _MetaText(
-                            icon: Icons.person_outline,
-                            text: grenade.author!.trim(),
-                          ),
+                        if (author != null && author.isNotEmpty)
+                          _MetaText(icon: Icons.person_outline, text: author),
                       ],
                     ),
                   ],
@@ -128,6 +105,32 @@ class SelectableGrenadeListItem extends StatelessWidget {
   }
 }
 
+class _ImpactBadge extends StatelessWidget {
+  const _ImpactBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.green.withValues(alpha: 0.16),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.my_location, size: 10, color: Colors.green),
+          SizedBox(width: 2),
+          Text(
+            '爆点',
+            style: TextStyle(fontSize: 10, color: Colors.green),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _MetaText extends StatelessWidget {
   final IconData icon;
   final String text;
@@ -136,10 +139,11 @@ class _MetaText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final textColor = Colors.grey[600];
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 12, color: Colors.grey[600]),
+        Icon(icon, size: 12, color: textColor),
         const SizedBox(width: 4),
         ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 160),
@@ -147,7 +151,7 @@ class _MetaText extends StatelessWidget {
             text,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+            style: TextStyle(fontSize: 12, color: textColor),
           ),
         ),
       ],

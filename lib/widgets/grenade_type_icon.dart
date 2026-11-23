@@ -3,7 +3,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 
 import '../models.dart';
 
-/// 统一的道具类型图标，避免不同页面使用不同 emoji。
+/// 统一的道具类型图标，避免不同页面使用不同图标表现。
 class GrenadeTypeIcon extends StatelessWidget {
   final int type;
   final double size;
@@ -16,50 +16,57 @@ class GrenadeTypeIcon extends StatelessWidget {
     this.color,
   });
 
-  // 由设置“使用旧版图标”控制，启动及切换时同步
+  // 由设置“使用旧版图标”控制，启动及切换时同步。
   static bool useLegacy = false;
 
-  static IconData legacyIconForType(int type) {
-    switch (type) {
-      case GrenadeType.smoke:
-        return Icons.cloud;
-      case GrenadeType.flash:
-        return Icons.flash_on;
-      case GrenadeType.molotov:
-        return Icons.local_fire_department;
-      case GrenadeType.he:
-        return Icons.trip_origin;
-      case GrenadeType.wallbang:
-        return Icons.apps;
-      default:
-        return Icons.circle;
-    }
-  }
+  static IconData legacyIconForType(int type) => switch (type) {
+        GrenadeType.smoke => Icons.cloud,
+        GrenadeType.flash => Icons.flash_on,
+        GrenadeType.molotov => Icons.local_fire_department,
+        GrenadeType.he => Icons.trip_origin,
+        GrenadeType.wallbang => Icons.apps,
+        _ => Icons.circle,
+      };
 
-  static String assetForType(int type) {
-    switch (type) {
-      case GrenadeType.smoke:
-        return 'assets/icons/grenade_smoke.svg';
-      case GrenadeType.flash:
-        return 'assets/icons/grenade_flash.svg';
-      case GrenadeType.molotov:
-        return 'assets/icons/grenade_molotov.svg';
-      case GrenadeType.he:
-        return 'assets/icons/grenade_he.svg';
-      case GrenadeType.wallbang:
-        return 'assets/icons/grenade_wallbang.svg';
-      default:
-        return 'assets/icons/grenade_unknown.svg';
-    }
-  }
+  static String assetForType(int type) => switch (type) {
+        GrenadeType.smoke => 'assets/icons/grenade_smoke.svg',
+        GrenadeType.flash => 'assets/icons/grenade_flash.svg',
+        GrenadeType.molotov => 'assets/icons/grenade_molotov.svg',
+        GrenadeType.he => 'assets/icons/grenade_he.svg',
+        GrenadeType.wallbang => 'assets/icons/grenade_wallbang.svg',
+        _ => 'assets/icons/grenade_unknown.svg',
+      };
+
+  String get _label => switch (type) {
+        GrenadeType.smoke => '烟雾弹',
+        GrenadeType.flash => '闪光弹',
+        GrenadeType.molotov => '燃烧弹',
+        GrenadeType.he => '手雷',
+        GrenadeType.wallbang => '穿点',
+        _ => '未知道具',
+      };
+
+  Color _defaultColor(BuildContext context) => switch (type) {
+        GrenadeType.smoke => Colors.blueGrey,
+        GrenadeType.flash => Colors.amber.shade700,
+        GrenadeType.molotov => Colors.deepOrange,
+        GrenadeType.he => Colors.redAccent,
+        GrenadeType.wallbang => Theme.of(context).colorScheme.primary,
+        _ => Colors.grey,
+      };
 
   @override
   Widget build(BuildContext context) {
     final resolvedColor = color ?? _defaultColor(context);
     if (useLegacy) {
-      return Icon(legacyIconForType(type),
-          size: size, color: resolvedColor, semanticLabel: _label);
+      return Icon(
+        legacyIconForType(type),
+        size: size,
+        color: resolvedColor,
+        semanticLabel: _label,
+      );
     }
+    // 使用紧致 Center 确保父级为固定尺寸无对齐容器时仍保持图标尺寸并居中。
     return Center(
       widthFactor: 1,
       heightFactor: 1,
@@ -71,40 +78,6 @@ class GrenadeTypeIcon extends StatelessWidget {
         semanticsLabel: _label,
       ),
     );
-  }
-
-  String get _label {
-    switch (type) {
-      case GrenadeType.smoke:
-        return '烟雾弹';
-      case GrenadeType.flash:
-        return '闪光弹';
-      case GrenadeType.molotov:
-        return '燃烧弹';
-      case GrenadeType.he:
-        return '手雷';
-      case GrenadeType.wallbang:
-        return '穿点';
-      default:
-        return '未知道具';
-    }
-  }
-
-  Color _defaultColor(BuildContext context) {
-    switch (type) {
-      case GrenadeType.smoke:
-        return Colors.blueGrey;
-      case GrenadeType.flash:
-        return Colors.amber.shade700;
-      case GrenadeType.molotov:
-        return Colors.deepOrange;
-      case GrenadeType.he:
-        return Colors.redAccent;
-      case GrenadeType.wallbang:
-        return Theme.of(context).colorScheme.primary;
-      default:
-        return Colors.grey;
-    }
   }
 }
 

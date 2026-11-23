@@ -18,7 +18,8 @@ void paintSquareBrush(
   final diagonals = [Offset(h, h), Offset(h, -h)];
   for (var i = 0; i < points.length; i++) {
     final p = points[i];
-    canvas.drawRect(Rect.fromCenter(center: p, width: side, height: side), fill);
+    canvas.drawRect(
+        Rect.fromCenter(center: p, width: side, height: side), fill);
     if (i == 0) continue;
     final a = points[i - 1];
     // 两条对角线沿线段扫过的平行四边形，与两端方块合并即为完整扫掠区域

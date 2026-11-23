@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+/// 通用单色着色 SVG 图标组件。
 class AppSvgIcon extends StatelessWidget {
   final String asset;
   final double size;
