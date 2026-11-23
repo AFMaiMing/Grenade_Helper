@@ -2,59 +2,49 @@ import 'package:isar_community/isar.dart';
 
 part 'tag.g.dart';
 
-// 标签维度枚举值
-class TagDimension {
-  static const int role = 0; // 角色 (T/CT)
-  static const int area = 1; // 区域
-  static const int phase = 2; // 战术阶段
-  static const int spawn = 3; // 出身位
-  static const int purpose = 4; // 战术目的
-  static const int custom = 99; // 个人自定义
+abstract final class TagDimension {
+  static const int role = 0;
+  static const int area = 1;
+  static const int phase = 2;
+  static const int spawn = 3;
+  static const int purpose = 4;
+  static const int custom = 99;
 
-  // 自定义名称覆盖映射
+  /// 用户自定义的维度名称覆盖表
   static final Map<int, String> _customNames = {};
 
-  // 默认名称
-  static String _getDefaultName(int dimension) {
-    switch (dimension) {
-      case role:
-        return '角色';
-      case area:
-        return '区域';
-      case phase:
-        return '阶段';
-      case spawn:
-        return '身位';
-      case purpose:
-        return '目的';
-      case custom:
-        return '自定义';
-      default:
-        return '未知';
-    }
-  }
+  static String _defaultName(int dimension) => switch (dimension) {
+        role => '角色',
+        area => '区域',
+        phase => '阶段',
+        spawn => '身位',
+        purpose => '目的',
+        custom => '自定义',
+        _ => '未知',
+      };
 
-  static String getName(int dimension) {
-    return _customNames[dimension] ?? _getDefaultName(dimension);
-  }
+  static String getName(int dimension) =>
+      _customNames[dimension] ?? _defaultName(dimension);
 
   static void setName(int dimension, String name) {
-    if (name.trim().isEmpty) {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) {
       _customNames.remove(dimension);
     } else {
-      _customNames[dimension] = name.trim();
+      _customNames[dimension] = trimmed;
     }
   }
 
   static void loadFromMap(Map<int, String> names) {
-    _customNames.clear();
-    _customNames.addAll(names);
+    _customNames
+      ..clear()
+      ..addAll(names);
   }
 
-  static Map<int, String> getCustomNames() => Map.from(_customNames);
+  static Map<int, String> getCustomNames() =>
+      Map<int, String>.from(_customNames);
 }
 
-// 标签数据模型
 @collection
 class Tag {
   Id id = Isar.autoIncrement;
@@ -68,7 +58,7 @@ class Tag {
   int colorValue;
   int dimension;
 
-  // 自定义分组名称（可选，用于覆盖默认分组名）
+  /// 覆盖默认分组名的可选自定义名称
   String? groupName;
 
   @Index()

@@ -1,16 +1,23 @@
+import 'package:flutter/foundation.dart';
+
 /// 云端道具包模型
+@immutable
 class CloudPackage {
   final String id;
   final String name;
   final String description;
   final String author;
-  final String? map; // null = 全图
-  final String version; // 版本号，如 "1.0.0"
-  final String updated; // 最后更新日期
-  final String url; // 主源下载地址（R2 直连）
-  final String? cdnUrl; // CDN 加速下载地址（可选）
 
-  CloudPackage({
+  /// 适用地图标识，null 表示全图通用
+  final String? map;
+  final String version;
+  final String updated;
+  final String url;
+
+  /// 可选的 CDN 加速下载地址
+  final String? cdnUrl;
+
+  const CloudPackage({
     required this.id,
     required this.name,
     required this.description,
@@ -36,10 +43,11 @@ class CloudPackage {
     );
   }
 
-  /// 根据当前源设置获取下载 URL
+  /// 启用加速且存在有效 CDN 链接时优先返回加速地址
   String getDownloadUrl(bool useCDN) {
-    if (useCDN && cdnUrl != null && cdnUrl!.isNotEmpty) {
-      return cdnUrl!;
+    final candidate = cdnUrl;
+    if (useCDN && candidate != null && candidate.isNotEmpty) {
+      return candidate;
     }
     return url;
   }
@@ -57,14 +65,17 @@ class CloudPackage {
       };
 }
 
-/// 云端仓库索引
+/// 云端仓库索引模型
+@immutable
 class CloudPackageIndex {
   final int version;
-  final String? updated; // 索引最后更新日期
-  final List<String> sources; // 贡献者 JSON 文件列表
+  final String? updated;
+
+  /// 贡献者索引 JSON 文件路径列表
+  final List<String> sources;
   final List<CloudPackage> packages;
 
-  CloudPackageIndex({
+  const CloudPackageIndex({
     required this.version,
     this.updated,
     this.sources = const [],
@@ -72,17 +83,22 @@ class CloudPackageIndex {
   });
 
   factory CloudPackageIndex.fromJson(Map<String, dynamic> json) {
+    final rawSources = json['sources'] as List<dynamic>?;
+    final rawPackages = json['packages'] as List<dynamic>?;
     return CloudPackageIndex(
       version: json['version'] as int? ?? 1,
       updated: json['updated'] as String?,
-      sources: (json['sources'] as List<dynamic>?)
-              ?.map((e) => e as String)
-              .toList() ??
-          [],
-      packages: (json['packages'] as List<dynamic>?)
-              ?.map((e) => CloudPackage.fromJson(e as Map<String, dynamic>))
-              .toList() ??
-          [],
+      sources: rawSources == null
+          ? const <String>[]
+          : List<String>.unmodifiable(rawSources.map((e) => e as String)),
+      packages: rawPackages == null
+          ? const <CloudPackage>[]
+          : List<CloudPackage>.unmodifiable(
+              rawPackages.map(
+                (e) =>
+                    CloudPackage.fromJson(Map<String, dynamic>.from(e as Map)),
+              ),
+            ),
     );
   }
 }

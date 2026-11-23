@@ -2,7 +2,6 @@ import 'package:isar_community/isar.dart';
 
 part 'map_area.g.dart';
 
-/// 地图自定义区域模型
 @collection
 class MapArea {
   Id id = Isar.autoIncrement;
@@ -12,16 +11,15 @@ class MapArea {
 
   int colorValue;
 
-  /// 存储手绘笔画的JSON字符串
+  /// 手绘区域笔画的 JSON 字符串
   String strokes;
 
   @Index()
   int mapId;
 
-  /// 关联的楼层ID（可选，null表示所有楼层）
+  /// 关联的楼层 ID，null 表示适用所有楼层
   int? layerId;
 
-  /// 自动创建的标签ID
   int tagId;
 
   DateTime createdAt;

@@ -1,6 +1,19 @@
+import 'package:flutter/foundation.dart';
+
 import '../models.dart';
 import '../services/settings_service.dart';
 
+List<T> _decodeJsonList<T>(
+  Object? raw,
+  T Function(Map<String, dynamic> json) fromJson,
+) {
+  final items = raw as List<dynamic>? ?? const <dynamic>[];
+  return List<T>.unmodifiable(
+    items.map((e) => fromJson(Map<String, dynamic>.from(e as Map))),
+  );
+}
+
+@immutable
 class OverlayMediaItem {
   final String localPath;
   final int type;
@@ -27,6 +40,7 @@ class OverlayMediaItem {
   }
 }
 
+@immutable
 class OverlayStepItem {
   final int stepIndex;
   final String title;
@@ -48,18 +62,16 @@ class OverlayStepItem {
       };
 
   factory OverlayStepItem.fromJson(Map<String, dynamic> json) {
-    final rawMedias = json['medias'] as List<dynamic>? ?? const [];
     return OverlayStepItem(
       stepIndex: (json['stepIndex'] as num?)?.toInt() ?? 0,
       title: json['title'] as String? ?? '',
       description: json['description'] as String? ?? '',
-      medias: rawMedias
-          .map((e) => OverlayMediaItem.fromJson(Map<String, dynamic>.from(e as Map)))
-          .toList(growable: false),
+      medias: _decodeJsonList(json['medias'], OverlayMediaItem.fromJson),
     );
   }
 }
 
+@immutable
 class OverlayGrenadeItem {
   final int id;
   final String title;
@@ -87,20 +99,19 @@ class OverlayGrenadeItem {
       };
 
   factory OverlayGrenadeItem.fromJson(Map<String, dynamic> json) {
-    final rawSteps = json['steps'] as List<dynamic>? ?? const [];
     return OverlayGrenadeItem(
       id: (json['id'] as num).toInt(),
       title: json['title'] as String? ?? '',
       type: (json['type'] as num?)?.toInt() ?? GrenadeType.smoke,
       xRatio: (json['xRatio'] as num).toDouble(),
       yRatio: (json['yRatio'] as num).toDouble(),
-      steps: rawSteps
-          .map((e) => OverlayStepItem.fromJson(Map<String, dynamic>.from(e as Map)))
-          .toList(growable: false),
+      steps: _decodeJsonList(json['steps'], OverlayStepItem.fromJson),
     );
   }
 }
 
+/// 供悬浮窗独立进程消费的不可变地图快照
+@immutable
 class OverlayMapSnapshot {
   final int mapId;
   final String mapName;
@@ -116,54 +127,52 @@ class OverlayMapSnapshot {
     required this.grenades,
   });
 
+  /// 同步加载指定图层的道具、步骤与媒体生成快照
   static OverlayMapSnapshot fromIsar(GameMap map, MapLayer layer) {
     layer.grenades.loadSync();
-    final grenadeItems = <OverlayGrenadeItem>[];
-
-    for (final grenade in layer.grenades) {
-      grenade.steps.loadSync();
-      final steps = grenade.steps.toList()
-        ..sort((a, b) => a.stepIndex.compareTo(b.stepIndex));
-      final stepItems = <OverlayStepItem>[];
-
-      for (final step in steps) {
-        step.medias.loadSync();
-        final medias = step.medias.toList()
-          ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
-        stepItems.add(
-          OverlayStepItem(
-            stepIndex: step.stepIndex,
-            title: step.title,
-            description: step.description,
-            medias: medias
-                .map((m) => OverlayMediaItem(
-                      localPath: m.localPath,
-                      type: m.type,
-                      sortOrder: m.sortOrder,
-                    ))
-                .toList(growable: false),
-          ),
-        );
-      }
-
-      grenadeItems.add(
-        OverlayGrenadeItem(
-          id: grenade.id,
-          title: grenade.title,
-          type: grenade.type,
-          xRatio: grenade.xRatio,
-          yRatio: grenade.yRatio,
-          steps: List.unmodifiable(stepItems),
-        ),
-      );
-    }
-
+    final grenadeItems = List<OverlayGrenadeItem>.unmodifiable(
+      layer.grenades.map(_grenadeFromIsar),
+    );
     return OverlayMapSnapshot(
       mapId: map.id,
       mapName: map.name,
       layerId: layer.id,
       layerAssetPath: layer.assetPath,
-      grenades: List.unmodifiable(grenadeItems),
+      grenades: grenadeItems,
+    );
+  }
+
+  static OverlayGrenadeItem _grenadeFromIsar(Grenade grenade) {
+    grenade.steps.loadSync();
+    final sortedSteps = grenade.steps.toList()
+      ..sort((a, b) => a.stepIndex.compareTo(b.stepIndex));
+    return OverlayGrenadeItem(
+      id: grenade.id,
+      title: grenade.title,
+      type: grenade.type,
+      xRatio: grenade.xRatio,
+      yRatio: grenade.yRatio,
+      steps: List<OverlayStepItem>.unmodifiable(sortedSteps.map(_stepFromIsar)),
+    );
+  }
+
+  static OverlayStepItem _stepFromIsar(GrenadeStep step) {
+    step.medias.loadSync();
+    final sortedMedias = step.medias.toList()
+      ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+    return OverlayStepItem(
+      stepIndex: step.stepIndex,
+      title: step.title,
+      description: step.description,
+      medias: List<OverlayMediaItem>.unmodifiable(
+        sortedMedias.map(
+          (m) => OverlayMediaItem(
+            localPath: m.localPath,
+            type: m.type,
+            sortOrder: m.sortOrder,
+          ),
+        ),
+      ),
     );
   }
 
@@ -176,20 +185,18 @@ class OverlayMapSnapshot {
       };
 
   factory OverlayMapSnapshot.fromJson(Map<String, dynamic> json) {
-    final rawGrenades = json['grenades'] as List<dynamic>? ?? const [];
     return OverlayMapSnapshot(
       mapId: (json['mapId'] as num).toInt(),
       mapName: json['mapName'] as String? ?? '',
       layerId: (json['layerId'] as num).toInt(),
       layerAssetPath: json['layerAssetPath'] as String? ?? '',
-      grenades: rawGrenades
-          .map((e) =>
-              OverlayGrenadeItem.fromJson(Map<String, dynamic>.from(e as Map)))
-          .toList(growable: false),
+      grenades: _decodeJsonList(json['grenades'], OverlayGrenadeItem.fromJson),
     );
   }
 }
 
+/// 悬浮窗启动 IPC 握手初始化配置
+@immutable
 class OverlayInitConfig {
   final double x;
   final double y;
@@ -227,10 +234,12 @@ class OverlayInitConfig {
     for (final action in HotkeyAction.values) {
       final entry = raw[action.name];
       if (entry is Map) {
-        result[action] = HotkeyConfig.fromJson(Map<String, dynamic>.from(entry));
+        result[action] = HotkeyConfig.fromJson(
+          Map<String, dynamic>.from(entry),
+        );
       }
     }
-    return result;
+    return Map<HotkeyAction, HotkeyConfig>.unmodifiable(result);
   }
 
   Map<String, dynamic> toJson() => {

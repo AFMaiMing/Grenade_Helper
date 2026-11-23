@@ -2,9 +2,7 @@ import 'package:isar_community/isar.dart';
 
 part 'models.g.dart';
 
-// --- 1. 常量定义 ---
-
-class GrenadeType {
+abstract final class GrenadeType {
   static const int smoke = 0;
   static const int flash = 1;
   static const int molotov = 2;
@@ -12,19 +10,17 @@ class GrenadeType {
   static const int wallbang = 4;
 }
 
-class TeamType {
+abstract final class TeamType {
   static const int all = 0;
   static const int ct = 1;
   static const int t = 2;
   static const int onlyAll = 3;
 }
 
-class MediaType {
+abstract final class MediaType {
   static const int image = 0;
   static const int video = 1;
 }
-
-// --- 2. 数据库实体定义 ---
 
 @collection
 class GameMap {
@@ -34,7 +30,6 @@ class GameMap {
   String backgroundPath;
   String iconPath;
 
-  // 关联 MapLayer
   final layers = IsarLinks<MapLayer>();
 
   GameMap({
@@ -52,11 +47,9 @@ class MapLayer {
   String assetPath;
   int sortOrder;
 
-  // 反向链接到 GameMap
   @Backlink(to: 'layers')
   final map = IsarLink<GameMap>();
 
-  // 一对多: MapLayer -> Grenades
   final grenades = IsarLinks<Grenade>();
 
   MapLayer({
@@ -71,8 +64,8 @@ class Grenade {
   Id id = Isar.autoIncrement;
 
   String title;
-  int type; // GrenadeType
-  int team; // TeamType
+  int type;
+  int team;
   bool isFavorite;
   @Index()
   int? favoriteFolderId;
@@ -83,33 +76,25 @@ class Grenade {
   double xRatio;
   double yRatio;
 
-  /// 作者名称
   String? author;
-
-  /// 标记是否进行本地编辑
   bool hasLocalEdits;
-
-  /// 标记道具是否为导入
   bool isImported;
 
-  /// 唯一标识符，用于跨设备同步和去重
+  /// 跨设备同步与去重用的唯一标识
   @Index()
   String? uniqueId;
 
-  /// 原始出处链接
   String? sourceUrl;
-
-  /// 出处备注
   String? sourceNote;
 
-  /// 爆点名称/位置描述
+  /// 爆点名称或位置描述
   String? description;
 
   double? impactXRatio;
   double? impactYRatio;
   String? impactAreaStrokes;
 
-  /// 爆点分组ID（用于自定义分组筛选）
+  /// 同一爆点下的自定义分组 ID
   int? impactGroupId;
 
   @Backlink(to: 'grenades')
@@ -143,7 +128,6 @@ class GrenadeStep {
   String description;
   int stepIndex;
 
-  // 反向链接到 Grenade
   @Backlink(to: 'steps')
   final grenade = IsarLink<Grenade>();
 
@@ -164,7 +148,6 @@ class StepMedia {
   int type;
   int sortOrder;
 
-  // 反向链接到 GrenadeStep
   @Backlink(to: 'medias')
   final step = IsarLink<GrenadeStep>();
 
@@ -175,7 +158,6 @@ class StepMedia {
   });
 }
 
-/// 导入历史记录
 @collection
 class ImportHistory {
   Id id = Isar.autoIncrement;
@@ -186,7 +168,6 @@ class ImportHistory {
   int updatedCount;
   int skippedCount;
 
-  // 关联导入的道具
   final grenades = IsarLinks<Grenade>();
 
   ImportHistory({
@@ -198,27 +179,21 @@ class ImportHistory {
   });
 }
 
-/// 爆点分组（用于在同一爆点下对投掷点进行自定义分组）
+/// 同一爆点下投掷点的自定义分组
 @collection
 class ImpactGroup {
   Id id = Isar.autoIncrement;
 
-  /// 分组名称
   @Index()
   String name;
 
-  /// 道具类型（GrenadeType）
   int type;
-
-  /// 关联的爆点坐标（用于限定分组范围）
   double impactXRatio;
   double impactYRatio;
 
-  /// 关联的图层ID
   @Index()
   int layerId;
 
-  /// 创建时间
   DateTime createdAt;
   DateTime updatedAt;
 
@@ -234,25 +209,20 @@ class ImpactGroup {
         updatedAt = updated ?? (created ?? DateTime.now());
 }
 
-/// 收藏夹
 @collection
 class FavoriteFolder {
   Id id = Isar.autoIncrement;
 
-  /// 所属地图
   @Index()
   int mapId;
 
-  /// 显示名称
   String name;
 
-  /// 规范化名称（用于 mapId 维度下唯一校验）
+  /// 地图维度下用于唯一校验的规范化名称
   @Index()
   String nameKey;
 
-  /// 排序权重
   int sortOrder;
-
   DateTime createdAt;
   DateTime updatedAt;
 

@@ -4,25 +4,18 @@ import 'package:flutter_riverpod/legacy.dart';
 import 'package:isar_community/isar.dart';
 import 'models.dart';
 
-// 全局 Isar 数据库
+/// 全局 Isar 实例，须在根 ProviderScope 中覆盖注入
 final isarProvider = Provider<Isar>((ref) => throw UnimplementedError());
 
-// 主题模式 Provider
 final themeModeProvider = StateProvider<int>((ref) => 2);
 
-/// 将 int 转换为 Flutter ThemeMode
-ThemeMode intToThemeMode(int value) {
-  switch (value) {
-    case 1:
-      return ThemeMode.light;
-    case 2:
-      return ThemeMode.dark;
-    default:
-      return ThemeMode.system;
-  }
-}
+/// 将持久化主题编号转换为 Flutter ThemeMode
+ThemeMode intToThemeMode(int value) => switch (value) {
+      1 => ThemeMode.light,
+      2 => ThemeMode.dark,
+      _ => ThemeMode.system,
+    };
 
-// --- 筛选状态 ---
 final teamFilterProvider =
     StateProvider.autoDispose<int>((ref) => TeamType.all);
 final onlyFavoritesProvider = StateProvider.autoDispose<bool>((ref) => false);
@@ -31,28 +24,20 @@ final typeFilterProvider = StateProvider.autoDispose<Set<int>>((ref) => <int>{
       GrenadeType.flash,
       GrenadeType.molotov,
       GrenadeType.he,
-      GrenadeType.wallbang
+      GrenadeType.wallbang,
     });
 
-// 出生点与人质点显示开关（默认关闭）
 final showSpawnPointsProvider = StateProvider.autoDispose<bool>((ref) => false);
 final showCasualSpawnPointsProvider =
     StateProvider.autoDispose<bool>((ref) => false);
 final showHostagePointsProvider =
     StateProvider.autoDispose<bool>((ref) => false);
 
-// 地图连线设置
-final mapLineColorProvider =
-    StateProvider<int>((ref) => 0xFFE040FB); // 默认 PurpleAccent (0xFFE040FB)
+final mapLineColorProvider = StateProvider<int>((ref) => 0xFFE040FB);
 final mapLineOpacityProvider = StateProvider<double>((ref) => 0.6);
-
-// 爆点区域透明度 Provider
 final impactAreaOpacityProvider = StateProvider<double>((ref) => 0.4);
 
-// ==================== Isar 数据流 ====================
-
-// 层级 1: 原始数据源
-// 从 Isar 数据库取当前楼层数据
+/// 监听指定楼层的原始道具列表数据流
 final _rawLayerGrenadesProvider =
     StreamProvider.autoDispose.family<List<Grenade>, int>((ref, layerId) {
   final isar = ref.watch(isarProvider);
@@ -62,34 +47,40 @@ final _rawLayerGrenadesProvider =
       .watch(fireImmediately: true);
 });
 
-// 层级 2: 逻辑过滤器
+bool _matchesGrenadeFilter(
+  Grenade grenade, {
+  required int teamFilter,
+  required bool onlyFavorites,
+  required Set<int> selectedTypes,
+}) {
+  if (!selectedTypes.contains(grenade.type)) return false;
+  if (onlyFavorites && !grenade.isFavorite) return false;
+  return switch (teamFilter) {
+    TeamType.onlyAll => grenade.team == TeamType.all,
+    TeamType.ct => grenade.team == TeamType.ct,
+    TeamType.t => grenade.team == TeamType.t,
+    _ => true,
+  };
+}
+
+/// 根据当前筛选状态对指定楼层道具列表执行响应式内存过滤
 final filteredGrenadesProvider =
     Provider.autoDispose.family<AsyncValue<List<Grenade>>, int>((ref, layerId) {
-  // 1. 监听原始数据流
   final rawAsync = ref.watch(_rawLayerGrenadesProvider(layerId));
-
-  // 2. 监听筛选器状态
   final teamFilter = ref.watch(teamFilterProvider);
-  final onlyFav = ref.watch(onlyFavoritesProvider);
+  final onlyFavorites = ref.watch(onlyFavoritesProvider);
   final selectedTypes = ref.watch(typeFilterProvider);
 
-  // 3. 使用 whenData 进行安全的内存过滤
-  return rawAsync.whenData((allGrenades) {
-    return allGrenades.where((g) {
-      // A. 类型筛选
-      if (!selectedTypes.contains(g.type)) return false;
-
-      // B. 阵营筛选
-      if (teamFilter == TeamType.onlyAll && g.team != TeamType.all) {
-        return false;
-      }
-      if (teamFilter == TeamType.ct && g.team != TeamType.ct) return false;
-      if (teamFilter == TeamType.t && g.team != TeamType.t) return false;
-
-      // C. 收藏筛选
-      if (onlyFav && !g.isFavorite) return false;
-
-      return true;
-    }).toList();
-  });
+  return rawAsync.whenData(
+    (allGrenades) => allGrenades
+        .where(
+          (g) => _matchesGrenadeFilter(
+            g,
+            teamFilter: teamFilter,
+            onlyFavorites: onlyFavorites,
+            selectedTypes: selectedTypes,
+          ),
+        )
+        .toList(),
+  );
 });
