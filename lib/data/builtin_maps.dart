@@ -1,5 +1,6 @@
 import '../models.dart';
 
+/// 内置地图静态配置模型。
 class BuiltinMapConfig {
   final String name;
   final String key;
@@ -20,6 +21,7 @@ class BuiltinMapConfig {
   String get iconPath => 'assets/icons/${key}_icon.svg';
 }
 
+/// 官方内置地图有序配置表（含现役与后备图池）。
 const List<BuiltinMapConfig> builtinMapsConfig = [
   BuiltinMapConfig(
     name: 'Mirage',
@@ -114,39 +116,44 @@ const List<BuiltinMapConfig> builtinMapsConfig = [
   ),
 ];
 
-final Map<String, String> _legacyBuiltinAssetPathMap = {
+String _normalizeAssetPath(String path) =>
+    path.replaceAll('\\', '/').toLowerCase();
+
+final Map<String, String> _legacyBuiltinAssetPathMap = Map.unmodifiable({
   for (final config in builtinMapsConfig)
     config.legacyBackgroundPath: config.backgroundPath,
-};
+});
 
-final Map<String, int> _builtinMapOrderByKey = {
-  for (var i = 0; i < builtinMapsConfig.length; i++) builtinMapsConfig[i].key: i,
-};
+final Map<String, int> _builtinMapOrderByKey = Map.unmodifiable({
+  for (var i = 0; i < builtinMapsConfig.length; i++)
+    builtinMapsConfig[i].key: i,
+});
 
+/// 根据图标或背景资源路径匹配内置地图配置。
 BuiltinMapConfig? findBuiltinMapConfig(GameMap map) {
-  final normalizedIconPath = map.iconPath.replaceAll('\\', '/').toLowerCase();
-  final normalizedBackgroundPath =
-      map.backgroundPath.replaceAll('\\', '/').toLowerCase();
+  final iconPath = _normalizeAssetPath(map.iconPath);
+  final backgroundPath = _normalizeAssetPath(map.backgroundPath);
 
   for (final config in builtinMapsConfig) {
-    if (normalizedIconPath == config.iconPath) return config;
-    if (normalizedBackgroundPath == config.backgroundPath ||
-        normalizedBackgroundPath == config.legacyBackgroundPath) {
+    if (iconPath == config.iconPath ||
+        backgroundPath == config.backgroundPath ||
+        backgroundPath == config.legacyBackgroundPath) {
       return config;
     }
   }
   return null;
 }
 
+/// 返回内置地图的展示排序索引，非内置地图排在末尾。
 int builtinMapSortOrder(GameMap map) {
   final config = findBuiltinMapConfig(map);
   if (config == null) return builtinMapsConfig.length;
   return _builtinMapOrderByKey[config.key] ?? builtinMapsConfig.length;
 }
 
+/// 将旧版内置 PNG 背景路径归一化迁移为当前 WEBP 路径。
 String normalizeLegacyBuiltinAssetPath(String rawPath) {
   final trimmed = rawPath.trim();
   if (trimmed.isEmpty) return trimmed;
-  final normalized = trimmed.replaceAll('\\', '/').toLowerCase();
-  return _legacyBuiltinAssetPathMap[normalized] ?? trimmed;
+  return _legacyBuiltinAssetPathMap[_normalizeAssetPath(trimmed)] ?? trimmed;
 }

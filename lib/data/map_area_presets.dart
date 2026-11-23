@@ -1,5 +1,6 @@
 import '../models/tag.dart';
 
+/// 各内置地图默认区域标签名称表。
 const Map<String, List<String>> mapAreaPresets = {
   'dust2': [
     'A大',
@@ -26,7 +27,7 @@ const Map<String, List<String>> mapAreaPresets = {
     '狙位',
     '蓝车',
     '忍者位',
-    'A斜坡'
+    'A斜坡',
   ],
   'cache': [
     'A包点',
@@ -95,7 +96,7 @@ const Map<String, List<String>> mapAreaPresets = {
     '警亭',
     '跳台下',
     '沙袋',
-    '黑屋'
+    '黑屋',
   ],
   'inferno': [
     '沙袋',
@@ -134,7 +135,7 @@ const Map<String, List<String>> mapAreaPresets = {
     '下水道',
     '匪口',
     '匪家',
-    '警家'
+    '警家',
   ],
   'nuke': [
     'A包',
@@ -172,7 +173,7 @@ const Map<String, List<String>> mapAreaPresets = {
     '下水道',
     'B柱',
     '匪家',
-    '警家'
+    '警家',
   ],
   'vertigo': [
     'A包',
@@ -185,7 +186,7 @@ const Map<String, List<String>> mapAreaPresets = {
     '中厅',
     'A小',
     '匪家',
-    '警家'
+    '警家',
   ],
   'ancient': [
     'A包',
@@ -204,7 +205,7 @@ const Map<String, List<String>> mapAreaPresets = {
     'B斜坡',
     '中路',
     '匪家',
-    '警家'
+    '警家',
   ],
   'anubis': [
     'A包',
@@ -221,7 +222,7 @@ const Map<String, List<String>> mapAreaPresets = {
     '死点',
     'B门外',
     '匪家',
-    '警家'
+    '警家',
   ],
   'train': [
     'A包',
@@ -263,6 +264,7 @@ const Map<String, List<String>> mapAreaPresets = {
   ],
 };
 
+/// 跨地图通用的非区域系统标签默认表。
 const Map<int, List<String>> commonSystemTags = {
   TagDimension.role: ['T方', 'CT方', '通用'],
   TagDimension.phase: ['开局', '中期', '残局', '回防'],
@@ -270,6 +272,7 @@ const Map<int, List<String>> commonSystemTags = {
   TagDimension.purpose: ['封烟', '爆闪', '火封', '迷惑', '压制', '信息'],
 };
 
+/// 标签维度默认配色表。
 const Map<int, int> dimensionColors = {
   TagDimension.role: 0xFF9C27B0,
   TagDimension.area: 0xFF4CAF50,

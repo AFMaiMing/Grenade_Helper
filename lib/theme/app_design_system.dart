@@ -1,6 +1,7 @@
 import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/material.dart';
 
+/// 响应式断点与移动端底部栏安全留白工具。
 abstract final class AppBreakpoints {
   static const double mobile = 720;
   static const double expandedNavigation = 1280;
@@ -13,7 +14,7 @@ abstract final class AppBreakpoints {
   static bool isExpandedNavigation(BuildContext context) =>
       MediaQuery.sizeOf(context).width >= expandedNavigation;
 
-  /// Adds enough trailing scroll space for the transparent mobile bottom bar.
+  /// 为透明移动端底部栏预留底部滚动留白。
   static EdgeInsets withMobileBottomBarClearance(
     BuildContext context,
     EdgeInsets padding,
@@ -33,6 +34,7 @@ abstract final class AppBreakpoints {
   }
 }
 
+/// 全局统一动效时长与曲线常量。
 abstract final class AppMotion {
   static const Duration quick = Duration(milliseconds: 150);
   static const Duration content = Duration(milliseconds: 220);
@@ -41,6 +43,7 @@ abstract final class AppMotion {
   static const Curve exit = Curves.easeInCubic;
 }
 
+/// 应用语义化扩展色板，覆盖表面层级与道具类型色值。
 @immutable
 class AppThemeExtension extends ThemeExtension<AppThemeExtension> {
   final Color canvas;
@@ -131,29 +134,46 @@ class AppThemeExtension extends ThemeExtension<AppThemeExtension> {
   }
 }
 
+/// 便捷读取当前上下文对应的扩展主题色板。
 extension AppThemeContext on BuildContext {
-  AppThemeExtension get appTheme =>
-      Theme.of(this).extension<AppThemeExtension>() ??
-      (Theme.of(this).brightness == Brightness.dark
-          ? AppThemeExtension.dark
-          : AppThemeExtension.light);
+  AppThemeExtension get appTheme {
+    final theme = Theme.of(this);
+    return theme.extension<AppThemeExtension>() ??
+        (theme.brightness == Brightness.dark
+            ? AppThemeExtension.dark
+            : AppThemeExtension.light);
+  }
 }
 
+/// 亮色与暗色全局 Material 3 主题构建入口。
 abstract final class AppTheme {
+  static const BorderRadius _defaultRadius =
+      BorderRadius.all(Radius.circular(8));
+  static const RoundedRectangleBorder _defaultShape =
+      RoundedRectangleBorder(borderRadius: _defaultRadius);
+
   static ThemeData light() => _build(Brightness.light);
   static ThemeData dark() => _build(Brightness.dark);
 
   static ThemeData _build(Brightness brightness) {
     final isDark = brightness == Brightness.dark;
     final extension = isDark ? AppThemeExtension.dark : AppThemeExtension.light;
+    final seedColor =
+        isDark ? const Color(0xFFFFB44C) : const Color(0xFFC65D00);
     final scheme = ColorScheme.fromSeed(
-      seedColor: isDark ? const Color(0xFFFFB44C) : const Color(0xFFC65D00),
+      seedColor: seedColor,
       brightness: brightness,
-      primary: isDark ? const Color(0xFFFFB44C) : const Color(0xFFC65D00),
+      primary: seedColor,
       surface: isDark ? const Color(0xFF171A1E) : Colors.white,
     );
     final textColor =
         isDark ? const Color(0xFFF2F3F4) : const Color(0xFF171A1D);
+    final subtleSide = BorderSide(color: extension.subtleBorder);
+    final defaultInputBorder = OutlineInputBorder(
+      borderRadius: _defaultRadius,
+      borderSide: subtleSide,
+    );
+    final indicatorColor = scheme.primary.withValues(alpha: 0.14);
 
     return ThemeData(
       useMaterial3: true,
@@ -187,8 +207,8 @@ abstract final class AppTheme {
         surfaceTintColor: Colors.transparent,
         margin: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
-          side: BorderSide(color: extension.subtleBorder),
-          borderRadius: BorderRadius.circular(8),
+          side: subtleSide,
+          borderRadius: _defaultRadius,
         ),
       ),
       dividerTheme: DividerThemeData(color: extension.subtleBorder, space: 1),
@@ -198,38 +218,32 @@ abstract final class AppTheme {
         isDense: true,
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-          borderSide: BorderSide(color: extension.subtleBorder),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-          borderSide: BorderSide(color: extension.subtleBorder),
-        ),
+        border: defaultInputBorder,
+        enabledBorder: defaultInputBorder,
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           minimumSize: const Size(48, 44),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          shape: _defaultShape,
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
           minimumSize: const Size(48, 44),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          shape: _defaultShape,
         ),
       ),
       iconButtonTheme: IconButtonThemeData(
         style: IconButton.styleFrom(minimumSize: const Size(44, 44)),
       ),
       chipTheme: ChipThemeData(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        side: BorderSide(color: extension.subtleBorder),
+        shape: _defaultShape,
+        side: subtleSide,
       ),
       dialogTheme: DialogThemeData(
         backgroundColor: scheme.surface,
         surfaceTintColor: Colors.transparent,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        shape: _defaultShape,
       ),
       bottomSheetTheme: BottomSheetThemeData(
         backgroundColor: scheme.surface,
@@ -240,16 +254,14 @@ abstract final class AppTheme {
       ),
       navigationRailTheme: NavigationRailThemeData(
         backgroundColor: scheme.surface,
-        indicatorColor: scheme.primary.withValues(alpha: 0.14),
-        indicatorShape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        indicatorColor: indicatorColor,
+        indicatorShape: _defaultShape,
       ),
       navigationBarTheme: NavigationBarThemeData(
         elevation: 0,
         backgroundColor: scheme.surface,
-        indicatorColor: scheme.primary.withValues(alpha: 0.14),
-        indicatorShape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        indicatorColor: indicatorColor,
+        indicatorShape: _defaultShape,
       ),
       pageTransitionsTheme: const PageTransitionsTheme(builders: {
         TargetPlatform.android: CupertinoPageTransitionsBuilder(),
