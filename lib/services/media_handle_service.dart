@@ -1,4 +1,5 @@
 import 'dart:io';
+
 import 'package:path/path.dart' as p;
 
 typedef MediaHandleReleaser = Future<void> Function();
@@ -11,6 +12,7 @@ class _RegisteredReleaser {
   const _RegisteredReleaser(this.normalizedPath, this.releaser);
 }
 
+// 统一管理本地与跨进程媒体文件句柄释放回调，防止删除文件时因占用失败
 class MediaHandleService {
   static final Map<Object, _RegisteredReleaser> _releasers = {};
   static ExternalMediaHandleReleaser? externalReleaser;

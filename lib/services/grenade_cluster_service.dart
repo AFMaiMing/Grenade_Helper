@@ -12,6 +12,7 @@ class GrenadeCluster {
   }
 }
 
+// 提供悬浮窗道具点位确定性排序与邻近聚类分组能力
 class GrenadeClusterService {
   static const double defaultThreshold = 0.03;
 
@@ -26,12 +27,13 @@ class GrenadeClusterService {
   }
 
   static List<OverlayGrenadeItem> sortGrenades(
-      Iterable<OverlayGrenadeItem> grenades) {
-    final sorted = grenades.toList();
-    sorted.sort(compareGrenades);
+    Iterable<OverlayGrenadeItem> grenades,
+  ) {
+    final sorted = grenades.toList()..sort(compareGrenades);
     return sorted;
   }
 
+  // 按排序顺序贪心聚类，仅将平方距离严格小于阈值平方的点位并入同一锚点簇
   static List<GrenadeCluster> buildClusters(
     Iterable<OverlayGrenadeItem> grenades, {
     double threshold = defaultThreshold,

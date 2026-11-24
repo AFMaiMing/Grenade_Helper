@@ -7,6 +7,7 @@ import 'settings_service.dart';
 
 typedef HotkeyActionCallback = void Function(HotkeyAction action);
 
+// 通过平台通道同步 Win32 底层热键绑定并分发按压/抬起事件
 class WindowsHotkeyPollingService {
   WindowsHotkeyPollingService(
     this._settings, {
@@ -54,6 +55,71 @@ class WindowsHotkeyPollingService {
     HotkeyAction.navigateDown,
     HotkeyAction.navigateLeft,
     HotkeyAction.navigateRight,
+  };
+
+  static final Map<int, int> _virtualKeyByLogicalId = {
+    LogicalKeyboardKey.keyA.keyId: 0x41,
+    LogicalKeyboardKey.keyB.keyId: 0x42,
+    LogicalKeyboardKey.keyC.keyId: 0x43,
+    LogicalKeyboardKey.keyD.keyId: 0x44,
+    LogicalKeyboardKey.keyE.keyId: 0x45,
+    LogicalKeyboardKey.keyF.keyId: 0x46,
+    LogicalKeyboardKey.keyG.keyId: 0x47,
+    LogicalKeyboardKey.keyH.keyId: 0x48,
+    LogicalKeyboardKey.keyI.keyId: 0x49,
+    LogicalKeyboardKey.keyJ.keyId: 0x4A,
+    LogicalKeyboardKey.keyK.keyId: 0x4B,
+    LogicalKeyboardKey.keyL.keyId: 0x4C,
+    LogicalKeyboardKey.keyM.keyId: 0x4D,
+    LogicalKeyboardKey.keyN.keyId: 0x4E,
+    LogicalKeyboardKey.keyO.keyId: 0x4F,
+    LogicalKeyboardKey.keyP.keyId: 0x50,
+    LogicalKeyboardKey.keyQ.keyId: 0x51,
+    LogicalKeyboardKey.keyR.keyId: 0x52,
+    LogicalKeyboardKey.keyS.keyId: 0x53,
+    LogicalKeyboardKey.keyT.keyId: 0x54,
+    LogicalKeyboardKey.keyU.keyId: 0x55,
+    LogicalKeyboardKey.keyV.keyId: 0x56,
+    LogicalKeyboardKey.keyW.keyId: 0x57,
+    LogicalKeyboardKey.keyX.keyId: 0x58,
+    LogicalKeyboardKey.keyY.keyId: 0x59,
+    LogicalKeyboardKey.keyZ.keyId: 0x5A,
+    LogicalKeyboardKey.digit0.keyId: 0x30,
+    LogicalKeyboardKey.digit1.keyId: 0x31,
+    LogicalKeyboardKey.digit2.keyId: 0x32,
+    LogicalKeyboardKey.digit3.keyId: 0x33,
+    LogicalKeyboardKey.digit4.keyId: 0x34,
+    LogicalKeyboardKey.digit5.keyId: 0x35,
+    LogicalKeyboardKey.digit6.keyId: 0x36,
+    LogicalKeyboardKey.digit7.keyId: 0x37,
+    LogicalKeyboardKey.digit8.keyId: 0x38,
+    LogicalKeyboardKey.digit9.keyId: 0x39,
+    LogicalKeyboardKey.escape.keyId: 0x1B,
+    LogicalKeyboardKey.enter.keyId: 0x0D,
+    LogicalKeyboardKey.f1.keyId: 0x70,
+    LogicalKeyboardKey.f2.keyId: 0x71,
+    LogicalKeyboardKey.f3.keyId: 0x72,
+    LogicalKeyboardKey.f4.keyId: 0x73,
+    LogicalKeyboardKey.f5.keyId: 0x74,
+    LogicalKeyboardKey.f6.keyId: 0x75,
+    LogicalKeyboardKey.f7.keyId: 0x76,
+    LogicalKeyboardKey.f8.keyId: 0x77,
+    LogicalKeyboardKey.f9.keyId: 0x78,
+    LogicalKeyboardKey.f10.keyId: 0x79,
+    LogicalKeyboardKey.f11.keyId: 0x7A,
+    LogicalKeyboardKey.f12.keyId: 0x7B,
+    LogicalKeyboardKey.pageUp.keyId: 0x21,
+    LogicalKeyboardKey.pageDown.keyId: 0x22,
+    LogicalKeyboardKey.home.keyId: 0x24,
+    LogicalKeyboardKey.end.keyId: 0x23,
+    LogicalKeyboardKey.bracketLeft.keyId: 0xDB,
+    LogicalKeyboardKey.bracketRight.keyId: 0xDD,
+    LogicalKeyboardKey.arrowUp.keyId: 0x26,
+    LogicalKeyboardKey.arrowDown.keyId: 0x28,
+    LogicalKeyboardKey.arrowLeft.keyId: 0x25,
+    LogicalKeyboardKey.arrowRight.keyId: 0x27,
+    LogicalKeyboardKey.equal.keyId: 0xBB,
+    LogicalKeyboardKey.minus.keyId: 0xBD,
   };
 
   final SettingsService _settings;
@@ -161,98 +227,41 @@ class WindowsHotkeyPollingService {
     required bool isCore,
     required bool repeat,
   }) {
-    final virtualKey = _toVirtualKey(config.key);
+    final virtualKey = _virtualKeyByLogicalId[config.key.keyId];
     if (virtualKey == null) return null;
 
     final modifiers = config.modifiers;
     return {
       'virtualKey': virtualKey,
-      'requiresAlt': modifiers.any((key) =>
-          key == LogicalKeyboardKey.alt ||
-          key == LogicalKeyboardKey.altLeft ||
-          key == LogicalKeyboardKey.altRight),
-      'requiresCtrl': modifiers.any((key) =>
-          key == LogicalKeyboardKey.control ||
-          key == LogicalKeyboardKey.controlLeft ||
-          key == LogicalKeyboardKey.controlRight),
-      'requiresShift': modifiers.any((key) =>
-          key == LogicalKeyboardKey.shift ||
-          key == LogicalKeyboardKey.shiftLeft ||
-          key == LogicalKeyboardKey.shiftRight),
-      'requiresMeta': modifiers.any((key) =>
-          key == LogicalKeyboardKey.meta ||
-          key == LogicalKeyboardKey.metaLeft ||
-          key == LogicalKeyboardKey.metaRight),
+      'requiresAlt': _hasAnyModifier(modifiers, const [
+        LogicalKeyboardKey.alt,
+        LogicalKeyboardKey.altLeft,
+        LogicalKeyboardKey.altRight,
+      ]),
+      'requiresCtrl': _hasAnyModifier(modifiers, const [
+        LogicalKeyboardKey.control,
+        LogicalKeyboardKey.controlLeft,
+        LogicalKeyboardKey.controlRight,
+      ]),
+      'requiresShift': _hasAnyModifier(modifiers, const [
+        LogicalKeyboardKey.shift,
+        LogicalKeyboardKey.shiftLeft,
+        LogicalKeyboardKey.shiftRight,
+      ]),
+      'requiresMeta': _hasAnyModifier(modifiers, const [
+        LogicalKeyboardKey.meta,
+        LogicalKeyboardKey.metaLeft,
+        LogicalKeyboardKey.metaRight,
+      ]),
       'core': isCore,
       'repeat': repeat,
     };
   }
 
-  static int? _toVirtualKey(LogicalKeyboardKey logical) {
-    final mapping = <int, int>{
-      LogicalKeyboardKey.keyA.keyId: 0x41,
-      LogicalKeyboardKey.keyB.keyId: 0x42,
-      LogicalKeyboardKey.keyC.keyId: 0x43,
-      LogicalKeyboardKey.keyD.keyId: 0x44,
-      LogicalKeyboardKey.keyE.keyId: 0x45,
-      LogicalKeyboardKey.keyF.keyId: 0x46,
-      LogicalKeyboardKey.keyG.keyId: 0x47,
-      LogicalKeyboardKey.keyH.keyId: 0x48,
-      LogicalKeyboardKey.keyI.keyId: 0x49,
-      LogicalKeyboardKey.keyJ.keyId: 0x4A,
-      LogicalKeyboardKey.keyK.keyId: 0x4B,
-      LogicalKeyboardKey.keyL.keyId: 0x4C,
-      LogicalKeyboardKey.keyM.keyId: 0x4D,
-      LogicalKeyboardKey.keyN.keyId: 0x4E,
-      LogicalKeyboardKey.keyO.keyId: 0x4F,
-      LogicalKeyboardKey.keyP.keyId: 0x50,
-      LogicalKeyboardKey.keyQ.keyId: 0x51,
-      LogicalKeyboardKey.keyR.keyId: 0x52,
-      LogicalKeyboardKey.keyS.keyId: 0x53,
-      LogicalKeyboardKey.keyT.keyId: 0x54,
-      LogicalKeyboardKey.keyU.keyId: 0x55,
-      LogicalKeyboardKey.keyV.keyId: 0x56,
-      LogicalKeyboardKey.keyW.keyId: 0x57,
-      LogicalKeyboardKey.keyX.keyId: 0x58,
-      LogicalKeyboardKey.keyY.keyId: 0x59,
-      LogicalKeyboardKey.keyZ.keyId: 0x5A,
-      LogicalKeyboardKey.digit0.keyId: 0x30,
-      LogicalKeyboardKey.digit1.keyId: 0x31,
-      LogicalKeyboardKey.digit2.keyId: 0x32,
-      LogicalKeyboardKey.digit3.keyId: 0x33,
-      LogicalKeyboardKey.digit4.keyId: 0x34,
-      LogicalKeyboardKey.digit5.keyId: 0x35,
-      LogicalKeyboardKey.digit6.keyId: 0x36,
-      LogicalKeyboardKey.digit7.keyId: 0x37,
-      LogicalKeyboardKey.digit8.keyId: 0x38,
-      LogicalKeyboardKey.digit9.keyId: 0x39,
-      LogicalKeyboardKey.escape.keyId: 0x1B,
-      LogicalKeyboardKey.enter.keyId: 0x0D,
-      LogicalKeyboardKey.f1.keyId: 0x70,
-      LogicalKeyboardKey.f2.keyId: 0x71,
-      LogicalKeyboardKey.f3.keyId: 0x72,
-      LogicalKeyboardKey.f4.keyId: 0x73,
-      LogicalKeyboardKey.f5.keyId: 0x74,
-      LogicalKeyboardKey.f6.keyId: 0x75,
-      LogicalKeyboardKey.f7.keyId: 0x76,
-      LogicalKeyboardKey.f8.keyId: 0x77,
-      LogicalKeyboardKey.f9.keyId: 0x78,
-      LogicalKeyboardKey.f10.keyId: 0x79,
-      LogicalKeyboardKey.f11.keyId: 0x7A,
-      LogicalKeyboardKey.f12.keyId: 0x7B,
-      LogicalKeyboardKey.pageUp.keyId: 0x21,
-      LogicalKeyboardKey.pageDown.keyId: 0x22,
-      LogicalKeyboardKey.home.keyId: 0x24,
-      LogicalKeyboardKey.end.keyId: 0x23,
-      LogicalKeyboardKey.bracketLeft.keyId: 0xDB,
-      LogicalKeyboardKey.bracketRight.keyId: 0xDD,
-      LogicalKeyboardKey.arrowUp.keyId: 0x26,
-      LogicalKeyboardKey.arrowDown.keyId: 0x28,
-      LogicalKeyboardKey.arrowLeft.keyId: 0x25,
-      LogicalKeyboardKey.arrowRight.keyId: 0x27,
-      LogicalKeyboardKey.equal.keyId: 0xBB,
-      LogicalKeyboardKey.minus.keyId: 0xBD,
-    };
-    return mapping[logical.keyId];
+  static bool _hasAnyModifier(
+    Set<LogicalKeyboardKey> modifiers,
+    List<LogicalKeyboardKey> candidates,
+  ) {
+    return candidates.any(modifiers.contains);
   }
 }

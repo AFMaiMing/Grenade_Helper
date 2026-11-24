@@ -8,8 +8,12 @@ typedef OverlayCommandHandler = FutureOr<void> Function(
   String command,
   Map<String, dynamic>? args,
 );
+typedef VoidCallback = void Function();
 
+// 悬浮窗子进程侧 WebSocket IPC 客户端
 class OverlayIpcClient {
+  static const Duration _initTimeout = Duration(seconds: 10);
+
   final int port;
   final String token;
 
@@ -46,42 +50,19 @@ class OverlayIpcClient {
 
     final socket = await WebSocket.connect(uri.toString());
     _socket = socket;
-
     final initCompleter = Completer<OverlayInitConfig>();
 
     socket.listen(
-      (raw) {
-        if (raw is! String) return;
-        final dynamic decoded = jsonDecode(raw);
-        if (decoded is! Map) return;
-        final cmd = decoded['cmd'] as String?;
-        if (cmd == null) return;
-        final args = decoded['args'] is Map
-            ? Map<String, dynamic>.from(decoded['args'] as Map)
-            : null;
-
-        if (cmd == 'init' && !initCompleter.isCompleted && args != null) {
-          initCompleter.complete(OverlayInitConfig.fromJson(args));
-          return;
-        }
-        onCommand?.call(cmd, args);
-      },
-      onDone: () {
-        if (!initCompleter.isCompleted) {
-          initCompleter.completeError(StateError('IPC closed before init'));
-        }
-        onDisconnected?.call();
-      },
-      onError: (Object error) {
-        if (!initCompleter.isCompleted) {
-          initCompleter.completeError(error);
-        }
-        onDisconnected?.call();
-      },
+      (raw) => _handleServerMessage(raw, initCompleter),
+      onDone: () => _failInitAndDisconnect(
+        initCompleter,
+        StateError('IPC closed before init'),
+      ),
+      onError: (Object error) => _failInitAndDisconnect(initCompleter, error),
       cancelOnError: true,
     );
 
-    return initCompleter.future.timeout(const Duration(seconds: 10));
+    return initCompleter.future.timeout(_initTimeout);
   }
 
   void sendEvent(String event, [Map<String, dynamic>? args]) {
@@ -99,6 +80,34 @@ class OverlayIpcClient {
     } catch (_) {}
     _socket = null;
   }
-}
 
-typedef VoidCallback = void Function();
+  void _handleServerMessage(
+    dynamic raw,
+    Completer<OverlayInitConfig> initCompleter,
+  ) {
+    if (raw is! String) return;
+    final dynamic decoded = jsonDecode(raw);
+    if (decoded is! Map) return;
+    final cmd = decoded['cmd'] as String?;
+    if (cmd == null) return;
+
+    final args = decoded['args'] is Map
+        ? Map<String, dynamic>.from(decoded['args'] as Map)
+        : null;
+    if (cmd == 'init' && !initCompleter.isCompleted && args != null) {
+      initCompleter.complete(OverlayInitConfig.fromJson(args));
+      return;
+    }
+    onCommand?.call(cmd, args);
+  }
+
+  void _failInitAndDisconnect(
+    Completer<OverlayInitConfig> initCompleter,
+    Object error,
+  ) {
+    if (!initCompleter.isCompleted) {
+      initCompleter.completeError(error);
+    }
+    onDisconnected?.call();
+  }
+}

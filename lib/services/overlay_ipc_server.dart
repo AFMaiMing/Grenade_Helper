@@ -10,7 +10,13 @@ import '../models.dart';
 import '../models/overlay_snapshot.dart';
 import 'settings_service.dart';
 
+// 主进程侧悬浮窗独立子进程 WebSocket IPC 服务端
 class OverlayIpcServer {
+  static const Duration _releaseMediaTimeout = Duration(seconds: 2);
+  static const Duration _processReadyTimeout = Duration(seconds: 10);
+  static const Duration _gracefulCloseTimeout = Duration(milliseconds: 300);
+  static const Duration _snapshotDebounceDuration = Duration(milliseconds: 50);
+
   final Isar isar;
   final SettingsService settingsService;
   final VoidCallback? onOverlayHidden;
@@ -49,8 +55,7 @@ class OverlayIpcServer {
   }
 
   void clearActiveMap() {
-    _grenadeWatcher?.cancel();
-    _grenadeWatcher = null;
+    _cancelGrenadeWatcher();
     _snapshotDebounce?.cancel();
     _activeMap = null;
     _activeLayer = null;
@@ -118,29 +123,16 @@ class OverlayIpcServer {
       },
     });
     try {
-      await completer.future.timeout(
-        const Duration(seconds: 2),
-        onTimeout: () {},
-      );
+      await completer.future.timeout(_releaseMediaTimeout, onTimeout: () {});
     } finally {
       _pendingReleaseAcks.remove(requestId);
     }
   }
 
-  void _completePendingReleaseAcks() {
-    for (final completer in _pendingReleaseAcks.values) {
-      if (!completer.isCompleted) {
-        completer.complete();
-      }
-    }
-    _pendingReleaseAcks.clear();
-  }
-
   Future<void> dispose() async {
     _disposed = true;
     _completePendingReleaseAcks();
-    _grenadeWatcher?.cancel();
-    _grenadeWatcher = null;
+    _cancelGrenadeWatcher();
     _snapshotDebounce?.cancel();
 
     final process = _process;
@@ -148,7 +140,7 @@ class OverlayIpcServer {
       _sendRaw({'cmd': 'close'});
       if (process != null) {
         try {
-          await process.exitCode.timeout(const Duration(milliseconds: 300));
+          await process.exitCode.timeout(_gracefulCloseTimeout);
         } catch (_) {}
       }
     }
@@ -158,11 +150,7 @@ class OverlayIpcServer {
       _process = null;
     }
 
-    try {
-      await _socket?.close();
-    } catch (_) {}
-    _socket = null;
-
+    await _closeSocketQuietly();
     try {
       await _server?.close(force: true);
     } catch (_) {}
@@ -171,13 +159,12 @@ class OverlayIpcServer {
 
   Future<void> _startServerIfNeeded() async {
     if (_server != null) return;
-
     _token = _generateToken();
     _server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     _server!.listen(_handleHttpRequest);
   }
 
-  void _handleHttpRequest(HttpRequest request) async {
+  Future<void> _handleHttpRequest(HttpRequest request) async {
     final token = request.uri.queryParameters['token'];
     if (token != _token || !WebSocketTransformer.isUpgradeRequest(request)) {
       request.response.statusCode = HttpStatus.forbidden;
@@ -186,9 +173,7 @@ class OverlayIpcServer {
     }
 
     final socket = await WebSocketTransformer.upgrade(request);
-    try {
-      await _socket?.close();
-    } catch (_) {}
+    await _closeSocketQuietly();
     _socket = socket;
 
     socket.listen(
@@ -219,17 +204,7 @@ class OverlayIpcServer {
       ],
     );
     _process = process;
-
-    if (!kReleaseMode) {
-      process.stdout
-          .transform(utf8.decoder)
-          .transform(const LineSplitter())
-          .listen((line) => debugPrint('[Overlay] $line'));
-      process.stderr
-          .transform(utf8.decoder)
-          .transform(const LineSplitter())
-          .listen((line) => debugPrint('[Overlay:err] $line'));
-    }
+    _attachDebugLogPipes(process);
 
     unawaited(process.exitCode.then((code) {
       if (_process == process) {
@@ -241,14 +216,25 @@ class OverlayIpcServer {
         );
       }
       if (!_disposed) {
-        _grenadeWatcher?.cancel();
-        _grenadeWatcher = null;
+        _cancelGrenadeWatcher();
         onOverlayHidden?.call();
       }
     }));
 
-    await ready.future.timeout(const Duration(seconds: 10));
+    await ready.future.timeout(_processReadyTimeout);
     _rebindGrenadeWatcher();
+  }
+
+  void _attachDebugLogPipes(Process process) {
+    if (kReleaseMode) return;
+    process.stdout
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .listen((line) => debugPrint('[Overlay] $line'));
+    process.stderr
+        .transform(utf8.decoder)
+        .transform(const LineSplitter())
+        .listen((line) => debugPrint('[Overlay:err] $line'));
   }
 
   void _handleClientMessage(dynamic raw) {
@@ -265,23 +251,19 @@ class OverlayIpcServer {
         if (_readyCompleter != null && !_readyCompleter!.isCompleted) {
           _readyCompleter!.complete();
         }
-        break;
       case 'hidden':
         onOverlayHidden?.call();
-        break;
       case 'bounds_changed':
         final x = (args?['x'] as num?)?.toDouble();
         final y = (args?['y'] as num?)?.toDouble();
         if (x != null && y != null) {
           unawaited(settingsService.setOverlayPosition(x, y));
         }
-        break;
       case 'nav_speed_changed':
         final speed = (args?['speed'] as num?)?.toInt();
         if (speed != null) {
           unawaited(settingsService.setOverlayNavSpeed(speed));
         }
-        break;
       case 'media_released':
         final requestId = (args?['requestId'] as num?)?.toInt();
         if (requestId != null) {
@@ -290,7 +272,6 @@ class OverlayIpcServer {
             completer.complete();
           }
         }
-        break;
     }
   }
 
@@ -298,17 +279,14 @@ class OverlayIpcServer {
     if (_socket != closedSocket) return;
     _socket = null;
     _completePendingReleaseAcks();
-    _grenadeWatcher?.cancel();
-    _grenadeWatcher = null;
+    _cancelGrenadeWatcher();
     if (_readyCompleter != null && !_readyCompleter!.isCompleted) {
       _readyCompleter!.completeError(StateError('Overlay socket closed'));
     }
   }
 
   void _rebindGrenadeWatcher() {
-    _grenadeWatcher?.cancel();
-    _grenadeWatcher = null;
-
+    _cancelGrenadeWatcher();
     if (!isConnected || _activeLayer == null) return;
 
     final layerId = _activeLayer!.id;
@@ -318,10 +296,32 @@ class OverlayIpcServer {
         .watch(fireImmediately: false)
         .listen((_) {
       _snapshotDebounce?.cancel();
-      _snapshotDebounce = Timer(const Duration(milliseconds: 50), () {
-        _pushCurrentMapSnapshot();
-      });
+      _snapshotDebounce = Timer(
+        _snapshotDebounceDuration,
+        _pushCurrentMapSnapshot,
+      );
     });
+  }
+
+  void _cancelGrenadeWatcher() {
+    _grenadeWatcher?.cancel();
+    _grenadeWatcher = null;
+  }
+
+  void _completePendingReleaseAcks() {
+    for (final completer in _pendingReleaseAcks.values) {
+      if (!completer.isCompleted) {
+        completer.complete();
+      }
+    }
+    _pendingReleaseAcks.clear();
+  }
+
+  Future<void> _closeSocketQuietly() async {
+    try {
+      await _socket?.close();
+    } catch (_) {}
+    _socket = null;
   }
 
   void _pushCurrentMapSnapshot() {
@@ -351,6 +351,7 @@ class OverlayIpcServer {
     final size = SettingsService.calculateSizePixels(sizeIndex);
     final savedX = settingsService.getOverlayX();
     final savedY = settingsService.getOverlayY();
+    // 兼容历史右下角停靠残留坐标，避免窗口在屏幕外初始化
     final legacyParked = savedX != null &&
         savedY != null &&
         (savedX - (1.0 - size.$1)).abs() < 0.5 &&

@@ -1,12 +1,13 @@
 // ignore_for_file: unnecessary_getters_setters
 
 import 'package:flutter/material.dart';
-import 'package:window_manager/window_manager.dart';
 import 'package:tray_manager/tray_manager.dart';
-import 'settings_service.dart';
-import 'hotkey_service.dart';
+import 'package:window_manager/window_manager.dart';
 
-/// 窗口服务
+import 'hotkey_service.dart';
+import 'settings_service.dart';
+
+// 管理系统主窗口、系统托盘与悬浮窗显隐生命周期
 class WindowService with TrayListener, WindowListener {
   final SettingsService _settings;
   HotkeyService? _hotkeyService;
@@ -14,16 +15,14 @@ class WindowService with TrayListener, WindowListener {
   bool _isOverlayVisible = false;
   bool _isMainWindowVisible = true;
 
-  // 回调函数
   void Function()? onShowMainWindow;
   void Function()? onShowOverlay;
   void Function()? onHideOverlay;
   Future<void> Function()? onExitApp;
-  Future<void> Function()? onCloseDatabase; // 退出时关闭数据库
+  Future<void> Function()? onCloseDatabase;
 
   WindowService(this._settings);
 
-  /// 设置热键
   void setHotkeyService(HotkeyService service) {
     _hotkeyService = service;
   }
@@ -32,14 +31,11 @@ class WindowService with TrayListener, WindowListener {
   set isOverlayVisible(bool value) => _isOverlayVisible = value;
   bool get isMainWindowVisible => _isMainWindowVisible;
 
-  /// 初始化
   Future<void> init() async {
     if (!SettingsService.isDesktop) return;
 
-    // 初始化窗口管理器
     await windowManager.ensureInitialized();
-
-    WindowOptions windowOptions = const WindowOptions(
+    const windowOptions = WindowOptions(
       size: Size(1200, 800),
       minimumSize: Size(800, 600),
       center: true,
@@ -53,25 +49,16 @@ class WindowService with TrayListener, WindowListener {
       await windowManager.focus();
     });
 
-    // 设置阻止关闭，这样我们可以拦截关闭事件
+    // 拦截窗口关闭以支持最小化到托盘
     await windowManager.setPreventClose(true);
-
-    // 添加窗口监听
     windowManager.addListener(this);
-
-    // 初始化系统托盘
     await _initTray();
   }
 
-  /// 初始化托盘
   Future<void> _initTray() async {
     trayManager.addListener(this);
-
-    // 设置托盘图标
-    String iconPath = 'assets/icons/app_icon.ico';
-
     try {
-      await trayManager.setIcon(iconPath);
+      await trayManager.setIcon('assets/icons/app_icon.ico');
       await trayManager.setToolTip('Grenade Helper');
       await _updateTrayMenu();
     } catch (e) {
@@ -79,74 +66,57 @@ class WindowService with TrayListener, WindowListener {
     }
   }
 
-  /// 更新菜单
   Future<void> _updateTrayMenu() async {
     final menu = Menu(
       items: [
-        MenuItem(
-          key: 'show_main',
-          label: '显示主窗口',
-        ),
+        MenuItem(key: 'show_main', label: '显示主窗口'),
         MenuItem(
           key: 'show_overlay',
           label: _isOverlayVisible ? '隐藏悬浮窗' : '显示悬浮窗',
         ),
         MenuItem.separator(),
-        MenuItem(
-          key: 'exit',
-          label: '退出程序',
-        ),
+        MenuItem(key: 'exit', label: '退出程序'),
       ],
     );
     await trayManager.setContextMenu(menu);
   }
 
-  /// 菜单回调
   @override
   void onTrayMenuItemClick(MenuItem menuItem) {
     switch (menuItem.key) {
       case 'show_main':
         showMainWindow();
-        break;
       case 'show_overlay':
         if (_isOverlayVisible) {
           hideOverlay();
         } else {
           showOverlay();
         }
-        break;
       case 'exit':
         forceExitApp();
-        break;
     }
   }
 
-  /// 图标双击
   @override
   void onTrayIconMouseDown() {
     showMainWindow();
   }
 
-  /// 图标右键
   @override
   void onTrayIconRightMouseDown() {
     trayManager.popUpContextMenu();
   }
 
-  /// 窗口关闭
   @override
   void onWindowClose() async {
     if (_settings.getCloseToTray()) {
-      // 最小化到托盘而非关闭
       await windowManager.hide();
       _isMainWindowVisible = false;
     } else {
-      // 真正退出
       await forceExitApp();
     }
   }
 
-  /// 显示主窗口
   Future<void> showMainWindow() async {
     await windowManager.show();
     await windowManager.focus();
@@ -154,31 +124,25 @@ class WindowService with TrayListener, WindowListener {
     onShowMainWindow?.call();
   }
 
-  /// 隐藏主窗口
   Future<void> hideMainWindow() async {
     await windowManager.hide();
     _isMainWindowVisible = false;
   }
 
-  /// 显示悬浮窗
   Future<void> showOverlay() async {
     _isOverlayVisible = true;
     await _updateTrayMenu();
-    // 注册悬浮窗全局热键
     await _hotkeyService?.registerOverlayHotkeys();
     onShowOverlay?.call();
   }
 
-  /// 隐藏悬浮窗
   Future<void> hideOverlay() async {
     _isOverlayVisible = false;
     await _updateTrayMenu();
-    // 注销悬浮窗全局热键
     await _hotkeyService?.unregisterOverlayHotkeys();
     onHideOverlay?.call();
   }
 
-  /// 切换悬浮窗
   Future<void> toggleOverlay() async {
     if (_isOverlayVisible) {
       await hideOverlay();
@@ -187,13 +151,10 @@ class WindowService with TrayListener, WindowListener {
     }
   }
 
-  /// 强制退出
   Future<void> forceExitApp() async {
     await onExitApp?.call();
-    trayManager.removeListener(this);
-    windowManager.removeListener(this);
+    _removeListeners();
     await trayManager.destroy();
-    // 关闭数据库
     try {
       await onCloseDatabase?.call();
       debugPrint('[WindowService] Database closed successfully.');
@@ -204,8 +165,11 @@ class WindowService with TrayListener, WindowListener {
     await windowManager.close();
   }
 
-  /// 清理
   Future<void> dispose() async {
+    _removeListeners();
+  }
+
+  void _removeListeners() {
     trayManager.removeListener(this);
     windowManager.removeListener(this);
   }
