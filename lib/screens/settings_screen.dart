@@ -1,25 +1,21 @@
 import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_svg/flutter_svg.dart';
-import 'package:file_picker/file_picker.dart';
-import 'package:isar_community/isar.dart';
-import '../services/settings_service.dart';
-import '../services/data_service.dart';
-import '../services/map_management_service.dart';
-import '../services/lan_sync/lan_sync_local_store.dart';
-import '../services/tag_service.dart';
-import '../models.dart';
-import '../providers.dart';
-import '../widgets/map_icon.dart';
-import '../widgets/grenade_type_icon.dart';
-import '../theme/app_design_system.dart';
-import '../main.dart' show sendOverlayCommand;
-import 'grenade_select_delete_screen.dart';
 
-/// 设置
+import '../main.dart' show sendOverlayCommand;
+import '../providers.dart';
+import '../services/settings_service.dart';
+import '../theme/app_design_system.dart';
+import '../widgets/grenade_type_icon.dart';
+import 'grenade_select_delete_screen.dart';
+import 'settings/hotkey_editor_dialog.dart';
+import 'settings/lan_sync_debug_section.dart';
+import 'settings/settings_data_dialogs.dart';
+import 'settings/settings_sections.dart';
+
+/// 应用设置主界面
 class SettingsScreen extends ConsumerStatefulWidget {
   final SettingsService? settingsService;
   final Future<void> Function(HotkeyAction, HotkeyConfig)? onHotkeyChanged;
@@ -38,6 +34,7 @@ class SettingsScreen extends ConsumerStatefulWidget {
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   int _selectedCategory = 0;
+
   static const Map<HotkeyAction, String> _hotkeyActionLabels = {
     HotkeyAction.toggleOverlay: '显示/隐藏悬浮窗',
     HotkeyAction.navigateUp: '向上导航点位',
@@ -64,14 +61,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   late Map<HotkeyAction, HotkeyConfig> _hotkeys;
   late double _overlayOpacity;
-  late int _overlaySize; // 悬浮窗尺寸
+  late int _overlaySize;
   late bool _closeToTray;
-  late int _overlayNavSpeed; // 导航速度
-  // 连线设置
+  late int _overlayNavSpeed;
   late int _mapLineColor;
   late double _mapLineOpacity;
   late double _impactAreaOpacity;
-  // 摇杆设置
   late int _markerMoveMode;
   late int _grenadeCreateMode;
   late bool _showMapGrenadeList;
@@ -79,12 +74,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   late bool _mapMarkerUseEmoji;
   late double _joystickOpacity;
   late int _joystickSpeed;
-  // 存储路径
   String _currentDataPath = '';
   String _defaultDataPath = '';
-  bool _isLoadingLanSyncDebug = false;
-  LanSyncTombstoneStats _lanSyncTombstoneStats =
-      const LanSyncTombstoneStats(grenadeCount: 0, entityCount: 0);
 
   bool get _isDesktop =>
       Platform.isWindows || Platform.isMacOS || Platform.isLinux;
@@ -98,39 +89,34 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   @override
   void didUpdateWidget(SettingsScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // 激活时重载
+    // 切换页面激活时重新加载持久化配置
     _loadSettings();
   }
 
   void _loadSettings() {
-    if (widget.settingsService != null) {
-      // 重载设置
-      widget.settingsService!.reload();
-      _hotkeys = widget.settingsService!.getHotkeys();
-      _overlayOpacity = widget.settingsService!.getOverlayOpacity();
-      _overlaySize = widget.settingsService!.getOverlaySize();
-      _closeToTray = widget.settingsService!.getCloseToTray();
-      _overlayNavSpeed = widget.settingsService!.getOverlayNavSpeed();
-      _mapLineColor = widget.settingsService!.getMapLineColor();
-      _mapLineOpacity = widget.settingsService!.getMapLineOpacity();
-      _impactAreaOpacity = widget.settingsService!.getImpactAreaOpacity();
-      // 同步Provider
+    final service = widget.settingsService;
+    if (service != null) {
+      service.reload();
+      _hotkeys = service.getHotkeys();
+      _overlayOpacity = service.getOverlayOpacity();
+      _overlaySize = service.getOverlaySize();
+      _closeToTray = service.getCloseToTray();
+      _overlayNavSpeed = service.getOverlayNavSpeed();
+      _mapLineColor = service.getMapLineColor();
+      _mapLineOpacity = service.getMapLineOpacity();
+      _impactAreaOpacity = service.getImpactAreaOpacity();
       ref.read(impactAreaOpacityProvider.notifier).state = _impactAreaOpacity;
-
-      _markerMoveMode = widget.settingsService!.getMarkerMoveMode();
-      _grenadeCreateMode = widget.settingsService!.getGrenadeCreateMode();
-      _showMapGrenadeList = widget.settingsService!.getShowMapGrenadeList();
-      _highDensityClusterMode =
-          widget.settingsService!.getHighDensityClusterMode();
-      _mapMarkerUseEmoji = widget.settingsService!.getMapMarkerUseEmoji();
-      _joystickOpacity = widget.settingsService!.getJoystickOpacity();
-      _joystickSpeed = widget.settingsService!.getJoystickSpeed();
-      // 加载路径
+      _markerMoveMode = service.getMarkerMoveMode();
+      _grenadeCreateMode = service.getGrenadeCreateMode();
+      _showMapGrenadeList = service.getShowMapGrenadeList();
+      _highDensityClusterMode = service.getHighDensityClusterMode();
+      _mapMarkerUseEmoji = service.getMapMarkerUseEmoji();
+      _joystickOpacity = service.getJoystickOpacity();
+      _joystickSpeed = service.getJoystickSpeed();
       if (_isDesktop) {
         _loadDataPath();
       }
     } else {
-      // 默认值
       _hotkeys = {};
       _overlayOpacity = 0.9;
       _overlaySize = 1;
@@ -147,7 +133,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       _joystickOpacity = 0.8;
       _joystickSpeed = 3;
     }
-    // 更新UI
     if (mounted) {
       setState(() {});
     }
@@ -181,41 +166,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       return const Center(child: Text('设置服务未初始化'));
     }
     final themeMode = ref.watch(themeModeProvider);
-
-    final categories = <({String label, IconData icon, List<Widget> content})>[
-      (
-        label: '外观与地图',
-        icon: Icons.palette_outlined,
-        content: [
-          _buildGeneralAppearanceSection(themeMode),
-          _buildMapDisplaySection(),
-          _buildMarkerOperationSection(),
-        ],
-      ),
-      if (_isDesktop)
-        (
-          label: '快捷键与悬浮窗',
-          icon: Icons.keyboard_alt_outlined,
-          content: [
-            _buildDesktopHotkeySection(),
-            _buildDesktopOverlaySection(),
-          ],
-        ),
-      (
-        label: '数据管理',
-        icon: Icons.storage_outlined,
-        content: [
-          if (_isDesktop) _buildDesktopDataStorageSection(),
-          _buildDataManagementSection(),
-        ],
-      ),
-      if (kDebugMode)
-        (
-          label: '调试',
-          icon: Icons.bug_report_outlined,
-          content: [_buildLanSyncDebugSection()],
-        ),
-    ];
+    final categories = _buildCategories(themeMode);
 
     if (AppBreakpoints.isMobile(context)) {
       final bottomContentPadding = AppBreakpoints.withMobileBottomBarClearance(
@@ -232,10 +183,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             color: Colors.transparent,
             child: ExpansionTile(
               initiallyExpanded: index == 0,
-              leading: Icon(category.icon,
-                  color: Theme.of(context).colorScheme.primary),
-              title: Text(category.label,
-                  style: const TextStyle(fontWeight: FontWeight.w700)),
+              leading: Icon(
+                category.icon,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+              title: Text(
+                category.label,
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
               childrenPadding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
               children: _spacedSettingsSections(category.content),
             ),
@@ -257,10 +212,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             children: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(10, 10, 10, 14),
-                child: Text('设置分类',
-                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                          color: context.appTheme.mutedText,
-                        )),
+                child: Text(
+                  '设置分类',
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        color: context.appTheme.mutedText,
+                      ),
+                ),
               ),
               for (var index = 0; index < categories.length; index++)
                 Padding(
@@ -268,7 +225,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   child: ListTile(
                     selected: safeIndex == index,
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(6)),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
                     leading: Icon(categories[index].icon, size: 21),
                     title: Text(categories[index].label),
                     onTap: () => setState(() => _selectedCategory = index),
@@ -308,11 +266,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               key: ValueKey(safeIndex),
               padding: const EdgeInsets.all(24),
               children: [
-                Text(selected.label,
-                    style: Theme.of(context)
-                        .textTheme
-                        .headlineSmall
-                        ?.copyWith(fontWeight: FontWeight.w800)),
+                Text(
+                  selected.label,
+                  style: Theme.of(context)
+                      .textTheme
+                      .headlineSmall
+                      ?.copyWith(fontWeight: FontWeight.w800),
+                ),
                 const SizedBox(height: 18),
                 ..._spacedSettingsSections(selected.content),
               ],
@@ -321,6 +281,187 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ),
       ],
     );
+  }
+
+  List<({String label, IconData icon, List<Widget> content})> _buildCategories(
+    int themeMode,
+  ) {
+    return <({String label, IconData icon, List<Widget> content})>[
+      (
+        label: '外观与地图',
+        icon: Icons.palette_outlined,
+        content: [
+          GeneralAppearanceSection(
+            isDesktop: _isDesktop,
+            themeMode: themeMode,
+            closeToTray: _closeToTray,
+            onThemeModeChanged: (value) async {
+              ref.read(themeModeProvider.notifier).state = value;
+              await widget.settingsService?.setThemeMode(value);
+            },
+            onCloseToTrayChanged: (value) async {
+              setState(() => _closeToTray = value);
+              await widget.settingsService!.setCloseToTray(value);
+            },
+          ),
+          MapDisplaySection(
+            isDesktop: _isDesktop,
+            mapLineColor: _mapLineColor,
+            mapLineOpacity: _mapLineOpacity,
+            impactAreaOpacity: _impactAreaOpacity,
+            mapMarkerUseEmoji: _mapMarkerUseEmoji,
+            onMapLineColorChanged: (colorValue) async {
+              setState(() => _mapLineColor = colorValue);
+              ref.read(mapLineColorProvider.notifier).state = colorValue;
+              await widget.settingsService?.setMapLineColor(colorValue);
+            },
+            onMapLineOpacityChanged: (value) async {
+              setState(() => _mapLineOpacity = value);
+              ref.read(mapLineOpacityProvider.notifier).state = value;
+              await widget.settingsService?.setMapLineOpacity(value);
+            },
+            onImpactAreaOpacityChanged: (value) async {
+              setState(() => _impactAreaOpacity = value);
+              ref.read(impactAreaOpacityProvider.notifier).state = value;
+              await widget.settingsService?.setImpactAreaOpacity(value);
+            },
+            onMapMarkerUseEmojiChanged: (value) async {
+              setState(() => _mapMarkerUseEmoji = value);
+              GrenadeTypeIcon.useLegacy = value;
+              sendOverlayCommand('set_legacy_icons', {'value': value});
+              await widget.settingsService?.setMapMarkerUseEmoji(value);
+            },
+          ),
+          MarkerOperationSection(
+            isDesktop: _isDesktop,
+            grenadeCreateMode: _grenadeCreateMode,
+            showMapGrenadeList: _showMapGrenadeList,
+            highDensityClusterMode: _highDensityClusterMode,
+            markerMoveMode: _markerMoveMode,
+            joystickOpacity: _joystickOpacity,
+            joystickSpeed: _joystickSpeed,
+            onGrenadeCreateModeChanged: (value) async {
+              setState(() => _grenadeCreateMode = value);
+              await widget.settingsService?.setGrenadeCreateMode(value);
+            },
+            onShowMapGrenadeListChanged: (value) async {
+              setState(() => _showMapGrenadeList = value);
+              await widget.settingsService?.setShowMapGrenadeList(value);
+            },
+            onHighDensityClusterModeChanged: (value) async {
+              setState(() => _highDensityClusterMode = value);
+              await widget.settingsService?.setHighDensityClusterMode(value);
+            },
+            onMarkerMoveModeChanged: (value) async {
+              setState(() => _markerMoveMode = value);
+              await widget.settingsService?.setMarkerMoveMode(value);
+            },
+            onJoystickOpacityChanged: (value) async {
+              setState(() => _joystickOpacity = value);
+              await widget.settingsService?.setJoystickOpacity(value);
+            },
+            onJoystickSpeedChanged: (value) async {
+              setState(() => _joystickSpeed = value);
+              await widget.settingsService?.setJoystickSpeed(value);
+            },
+          ),
+        ],
+      ),
+      if (_isDesktop)
+        (
+          label: '快捷键与悬浮窗',
+          icon: Icons.keyboard_alt_outlined,
+          content: [
+            DesktopHotkeySection(
+              hotkeys: _hotkeys,
+              onEditHotkey: _showHotkeyEditor,
+              onResetHotkeys: _resetHotkeysToDefault,
+            ),
+            DesktopOverlaySection(
+              overlayOpacity: _overlayOpacity,
+              overlaySize: _overlaySize,
+              overlayNavSpeed: _overlayNavSpeed,
+              onOverlayOpacityChanged: (value) async {
+                setState(() => _overlayOpacity = value);
+                await widget.settingsService!.setOverlayOpacity(value);
+                sendOverlayCommand('update_opacity', {'opacity': value});
+              },
+              onOverlaySizeChanged: (newSize) async {
+                setState(() => _overlaySize = newSize);
+                await widget.settingsService!.setOverlaySize(newSize);
+                sendOverlayCommand('update_size', {'sizeIndex': newSize});
+              },
+              onOverlayNavSpeedChanged: (speedLevel) async {
+                setState(() => _overlayNavSpeed = speedLevel);
+                await widget.settingsService!.setOverlayNavSpeed(speedLevel);
+                sendOverlayCommand('update_nav_speed', {'speed': speedLevel});
+              },
+            ),
+          ],
+        ),
+      (
+        label: '数据管理',
+        icon: Icons.storage_outlined,
+        content: [
+          if (_isDesktop)
+            DesktopDataStorageSection(
+              currentDataPath: _currentDataPath,
+              defaultDataPath: _defaultDataPath,
+              onResetToDefaultPath: () =>
+                  SettingsDataActions.resetToDefaultPath(
+                context: context,
+                settingsService: widget.settingsService!,
+                currentDataPath: _currentDataPath,
+                defaultDataPath: _defaultDataPath,
+                onPathUpdated: (path) =>
+                    setState(() => _currentDataPath = path),
+              ),
+              onChangeDataDirectory: () =>
+                  SettingsDataActions.changeDataDirectory(
+                context: context,
+                settingsService: widget.settingsService!,
+                currentDataPath: _currentDataPath,
+                onPathUpdated: (path) =>
+                    setState(() => _currentDataPath = path),
+              ),
+            ),
+          DataManagementSection(
+            onInitializeBuiltinAreaMetadata: () =>
+                SettingsDataActions.initializeBuiltinAreaMetadataForAllMaps(
+              context: context,
+              ref: ref,
+            ),
+            onDeleteMapGrenades: () =>
+                SettingsDataActions.showDeleteMapGrenadesDialog(
+              context: context,
+              ref: ref,
+            ),
+            onDeleteCustomMaps: () =>
+                SettingsDataActions.showDeleteCustomMapsDialog(
+              context: context,
+              ref: ref,
+            ),
+            onBatchSelectDelete: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const GrenadeSelectDeleteScreen(),
+              ),
+            ),
+            onCleanupOrphanMediaFiles: () =>
+                SettingsDataActions.scanAndCleanupOrphanMediaFiles(
+              context: context,
+              ref: ref,
+            ),
+          ),
+        ],
+      ),
+      if (kDebugMode)
+        (
+          label: '调试',
+          icon: Icons.bug_report_outlined,
+          content: const [LanSyncDebugSection()],
+        ),
+    ];
   }
 
   List<Widget> _spacedSettingsSections(List<Widget> sections) {
@@ -332,1193 +473,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     return result;
   }
 
-  Widget _buildDesktopHotkeySection() {
-    return _buildSection(
-      iconAsset: 'assets/icons/settings_hotkeys.svg',
-      title: '快捷键配置',
-      subtitle: '点击可自定义快捷键',
-      children: [
-        _buildHotkeyTile(HotkeyAction.toggleOverlay, '显示/隐藏悬浮窗'),
-        const Divider(height: 1),
-        _buildHotkeyTile(HotkeyAction.navigateUp, '向上导航点位'),
-        _buildHotkeyTile(HotkeyAction.navigateDown, '向下导航点位'),
-        _buildHotkeyTile(HotkeyAction.navigateLeft, '向左导航点位'),
-        _buildHotkeyTile(HotkeyAction.navigateRight, '向右导航点位'),
-        const Divider(height: 1),
-        _buildHotkeyTile(HotkeyAction.prevGrenade, '上一个道具'),
-        _buildHotkeyTile(HotkeyAction.nextGrenade, '下一个道具'),
-        _buildHotkeyTile(HotkeyAction.prevStep, '上一个步骤'),
-        _buildHotkeyTile(HotkeyAction.nextStep, '下一个步骤'),
-        const Divider(height: 1),
-        _buildHotkeyTile(HotkeyAction.toggleSmoke, '烟雾弹过滤开关'),
-        _buildHotkeyTile(HotkeyAction.toggleFlash, '闪光弹过滤开关'),
-        _buildHotkeyTile(HotkeyAction.toggleMolotov, '燃烧弹过滤开关'),
-        _buildHotkeyTile(HotkeyAction.toggleHE, '手雷过滤开关'),
-        _buildHotkeyTile(HotkeyAction.toggleWallbang, '穿点过滤开关'),
-        const Divider(height: 1),
-        _buildHotkeyTile(HotkeyAction.togglePlayPause, '悬浮窗播放/暂停视频'),
-        _buildHotkeyTile(HotkeyAction.toggleMediaFullscreenPreview, '媒体全屏预览'),
-        const Divider(height: 1),
-        _buildHotkeyTile(HotkeyAction.increaseNavSpeed, '增加导航速度'),
-        _buildHotkeyTile(HotkeyAction.decreaseNavSpeed, '减少导航速度'),
-        const Divider(height: 1),
-        Padding(
-          padding: const EdgeInsets.all(12),
-          child: OutlinedButton.icon(
-            onPressed: _resetHotkeysToDefault,
-            icon: const Icon(Icons.restore, size: 18),
-            label: const Text('恢复默认快捷键'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: Colors.orange,
-              side: const BorderSide(color: Colors.orange),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildDesktopOverlaySection() {
-    return _buildSection(
-      iconAsset: 'assets/icons/settings_overlay.svg',
-      title: '悬浮窗设置',
-      children: [
-        ListTile(
-          title: const Text('透明度'),
-          subtitle: Text('${(_overlayOpacity * 100).toInt()}%'),
-          trailing: SizedBox(
-            width: 200,
-            child: Slider(
-              value: _overlayOpacity,
-              min: 0.3,
-              max: 1.0,
-              divisions: 14,
-              onChanged: (value) async {
-                setState(() => _overlayOpacity = value);
-                await widget.settingsService!.setOverlayOpacity(value);
-                sendOverlayCommand('update_opacity', {'opacity': value});
-              },
-            ),
-          ),
-        ),
-        ListTile(
-          title: const Text('窗口尺寸'),
-          subtitle:
-              Text(['小 (500×800)', '中 (550×850)', '大 (600×950)'][_overlaySize]),
-          trailing: SegmentedButton<int>(
-            segments: const [
-              ButtonSegment(value: 0, label: Text('小')),
-              ButtonSegment(value: 1, label: Text('中')),
-              ButtonSegment(value: 2, label: Text('大')),
-            ],
-            selected: {_overlaySize},
-            onSelectionChanged: (value) async {
-              final newSize = value.first;
-              setState(() => _overlaySize = newSize);
-              await widget.settingsService!.setOverlaySize(newSize);
-              sendOverlayCommand('update_size', {'sizeIndex': newSize});
-            },
-          ),
-        ),
-        ListTile(
-          title: const Text('导航速度'),
-          subtitle: Text('$_overlayNavSpeed 档'),
-          trailing: SizedBox(
-            width: 200,
-            child: Slider(
-              value: _overlayNavSpeed.toDouble(),
-              min: 1,
-              max: 5,
-              divisions: 4,
-              label: '$_overlayNavSpeed 档',
-              onChanged: (value) async {
-                final speedLevel = value.round();
-                setState(() => _overlayNavSpeed = speedLevel);
-                await widget.settingsService!.setOverlayNavSpeed(speedLevel);
-                sendOverlayCommand('update_nav_speed', {'speed': speedLevel});
-              },
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildGeneralAppearanceSection(int themeMode) {
-    return _buildSection(
-      iconAsset: 'assets/icons/settings_general.svg',
-      title: _isDesktop ? '通用设置' : '外观设置',
-      children: [
-        ListTile(
-          title: const Text('主题模式'),
-          trailing: SegmentedButton<int>(
-            segments: const [
-              ButtonSegment(
-                  value: 0,
-                  icon: Icon(Icons.brightness_auto),
-                  label: Text('自动')),
-              ButtonSegment(
-                  value: 1, icon: Icon(Icons.light_mode), label: Text('浅色')),
-              ButtonSegment(
-                  value: 2, icon: Icon(Icons.dark_mode), label: Text('深色')),
-            ],
-            selected: {themeMode},
-            onSelectionChanged: (value) async {
-              ref.read(themeModeProvider.notifier).state = value.first;
-              if (widget.settingsService != null) {
-                await widget.settingsService!.setThemeMode(value.first);
-              }
-            },
-          ),
-        ),
-        if (_isDesktop)
-          SwitchListTile(
-            title: const Text('关闭按钮最小化到托盘'),
-            subtitle: const Text('关闭时隐藏到系统托盘，不退出程序'),
-            value: _closeToTray,
-            onChanged: (value) async {
-              setState(() => _closeToTray = value);
-              await widget.settingsService!.setCloseToTray(value);
-            },
-          ),
-      ],
-    );
-  }
-
-  Widget _buildMapDisplaySection() {
-    return _buildSection(
-      iconAsset: 'assets/icons/settings_map.svg',
-      title: '地图显示',
-      children: [
-        ListTile(
-          title: const Text('连接线颜色'),
-          subtitle: _isDesktop
-              ? Padding(
-                  padding: const EdgeInsets.only(top: 8.0),
-                  child: _buildColorPickerRow(),
-                )
-              : _buildColorPickerRow(),
-        ),
-        ListTile(
-          title: const Text('连接线透明度'),
-          subtitle: Text('${(_mapLineOpacity * 100).toInt()}%'),
-          trailing: SizedBox(
-            width: _isDesktop ? 200 : 150,
-            child: Slider(
-              value: _mapLineOpacity,
-              min: 0.1,
-              max: 1.0,
-              divisions: 9,
-              onChanged: (value) async {
-                setState(() => _mapLineOpacity = value);
-                ref.read(mapLineOpacityProvider.notifier).state = value;
-                if (widget.settingsService != null) {
-                  await widget.settingsService!.setMapLineOpacity(value);
-                }
-              },
-            ),
-          ),
-        ),
-        if (_isDesktop)
-          ListTile(
-            title: const Text('爆点区域透明度'),
-            subtitle: Text('${(_impactAreaOpacity * 100).toInt()}%'),
-            trailing: SizedBox(
-              width: 200,
-              child: Slider(
-                value: _impactAreaOpacity,
-                min: 0.1,
-                max: 1.0,
-                divisions: 9,
-                onChanged: (value) async {
-                  setState(() => _impactAreaOpacity = value);
-                  ref.read(impactAreaOpacityProvider.notifier).state = value;
-                  if (widget.settingsService != null) {
-                    await widget.settingsService!.setImpactAreaOpacity(value);
-                  }
-                },
-              ),
-            ),
-          ),
-        SwitchListTile(
-          title: const Text('使用旧版道具图标'),
-          subtitle: const Text('所有界面的道具类型图标统一切换为旧版'),
-          value: _mapMarkerUseEmoji,
-          onChanged: (value) async {
-            setState(() => _mapMarkerUseEmoji = value);
-            GrenadeTypeIcon.useLegacy = value;
-            sendOverlayCommand('set_legacy_icons', {'value': value});
-            if (widget.settingsService != null) {
-              await widget.settingsService!.setMapMarkerUseEmoji(value);
-            }
-          },
-        ),
-      ],
-    );
-  }
-
-  Widget _buildMarkerOperationSection() {
-    return _buildSection(
-      iconAsset: 'assets/icons/settings_marker.svg',
-      title: '标点操作',
-      children: [
-        ListTile(
-          title: const Text('新增方式'),
-          subtitle: Text(
-            _grenadeCreateMode == 0
-                ? '单点地图立即新增道具'
-                : (_isDesktop ? '长按地图新增道具（鼠标左键按住）' : '长按地图新增道具'),
-          ),
-          trailing: SegmentedButton<int>(
-            segments: const [
-              ButtonSegment(value: 0, label: Text('单点新增')),
-              ButtonSegment(value: 1, label: Text('长按新增')),
-            ],
-            selected: {_grenadeCreateMode},
-            onSelectionChanged: (value) async {
-              setState(() => _grenadeCreateMode = value.first);
-              if (widget.settingsService != null) {
-                await widget.settingsService!.setGrenadeCreateMode(value.first);
-              }
-            },
-          ),
-        ),
-        SwitchListTile(
-          title: const Text('地图界面显示道具列表'),
-          subtitle: const Text('显示当前地图全部道具列表，便于管理和删除'),
-          value: _showMapGrenadeList,
-          onChanged: (value) async {
-            setState(() => _showMapGrenadeList = value);
-            if (widget.settingsService != null) {
-              await widget.settingsService!.setShowMapGrenadeList(value);
-            }
-          },
-        ),
-        SwitchListTile(
-          title: const Text('高密度模式/强聚合模式'),
-          subtitle: const Text('仅增大地图页聚合范围'),
-          value: _highDensityClusterMode,
-          onChanged: (value) async {
-            setState(() => _highDensityClusterMode = value);
-            if (widget.settingsService != null) {
-              await widget.settingsService!.setHighDensityClusterMode(value);
-            }
-          },
-        ),
-        if (!_isDesktop) ...[
-          ListTile(
-            title: const Text('移动模式'),
-            subtitle: Text(_markerMoveMode == 0 ? '长按选定后点击目标位置' : '长按选定后使用摇杆'),
-            trailing: SegmentedButton<int>(
-              segments: const [
-                ButtonSegment(value: 0, label: Text('长按选定')),
-                ButtonSegment(value: 1, label: Text('摇杆移动')),
-              ],
-              selected: {_markerMoveMode},
-              onSelectionChanged: (value) async {
-                setState(() => _markerMoveMode = value.first);
-                if (widget.settingsService != null) {
-                  await widget.settingsService!.setMarkerMoveMode(value.first);
-                }
-              },
-            ),
-          ),
-          if (_markerMoveMode == 1) ...[
-            ListTile(
-              title: const Text('摇杆透明度'),
-              subtitle: Text('${(_joystickOpacity * 100).toInt()}%'),
-              trailing: SizedBox(
-                width: 150,
-                child: Slider(
-                  value: _joystickOpacity,
-                  min: 0.1,
-                  max: 1.0,
-                  divisions: 9,
-                  onChanged: (value) async {
-                    setState(() => _joystickOpacity = value);
-                    if (widget.settingsService != null) {
-                      await widget.settingsService!.setJoystickOpacity(value);
-                    }
-                  },
-                ),
-              ),
-            ),
-            ListTile(
-              title: const Text('移动速度'),
-              subtitle: Text('$_joystickSpeed 档'),
-              trailing: SizedBox(
-                width: 150,
-                child: Slider(
-                  value: _joystickSpeed.toDouble(),
-                  min: 1,
-                  max: 5,
-                  divisions: 4,
-                  onChanged: (value) async {
-                    setState(() => _joystickSpeed = value.toInt());
-                    if (widget.settingsService != null) {
-                      await widget.settingsService!
-                          .setJoystickSpeed(value.toInt());
-                    }
-                  },
-                ),
-              ),
-            ),
-          ],
-        ],
-      ],
-    );
-  }
-
-  Widget _buildDesktopDataStorageSection() {
-    return _buildSection(
-      iconAsset: 'assets/icons/settings_storage.svg',
-      title: '数据存储',
-      subtitle: '更改数据目录需要重启应用',
-      children: [
-        ListTile(
-          title: const Text('当前数据目录'),
-          subtitle: Text(
-            _currentDataPath.isEmpty ? '加载中...' : _currentDataPath,
-            style: TextStyle(
-              fontSize: 12,
-              color: _currentDataPath == _defaultDataPath
-                  ? Colors.grey
-                  : Colors.orange,
-            ),
-          ),
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (_currentDataPath != _defaultDataPath &&
-                  _currentDataPath.isNotEmpty)
-                TextButton.icon(
-                  onPressed: _resetToDefaultPath,
-                  icon: const Icon(Icons.restore, size: 18),
-                  label: const Text('恢复默认'),
-                  style: TextButton.styleFrom(foregroundColor: Colors.grey),
-                ),
-              const SizedBox(width: 8),
-              ElevatedButton.icon(
-                onPressed: _changeDataDirectory,
-                icon: const Icon(Icons.folder_open, size: 18),
-                label: const Text('更改目录'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.orange,
-                  foregroundColor: Colors.black,
-                ),
-              ),
-            ],
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          child: Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.amber.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.amber.withValues(alpha: 0.3)),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.info_outline, color: Colors.amber[700], size: 20),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    '更改目录后需要手动重启应用。您可以选择自动将现有数据迁移到新目录。\n\n注意：更改目录后卸载应用需要手动删除更改过后数据目录的所有数据。',
-                    style: TextStyle(fontSize: 12, color: Colors.amber[700]),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildDataManagementSection() {
-    return _buildSection(
-      iconAsset: 'assets/icons/settings_data.svg',
-      title: '危险操作',
-      subtitle: '这些操作可能删除或覆盖本地数据',
-      danger: true,
-      children: [
-        ListTile(
-          leading: const Icon(Icons.playlist_add_check, color: Colors.teal),
-          title: const Text('重导入默认区域标签/数据'),
-          subtitle: const Text('一键补齐内置默认区域标签与区域几何数据'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => _initializeBuiltinAreaMetadataForAllMaps(),
-        ),
-        ListTile(
-          leading: const Icon(Icons.delete_sweep, color: Colors.redAccent),
-          title: const Text('清空地图道具'),
-          subtitle: const Text('删除选定地图的所有道具数据'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => _showDeleteMapGrenadesDialog(),
-        ),
-        ListTile(
-          leading: const Icon(Icons.delete_forever, color: Colors.red),
-          title: const Text('删除自定义地图'),
-          subtitle: const Text('支持多选删除自定义地图及其关联数据'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => _showDeleteCustomMapsDialog(),
-        ),
-        ListTile(
-          leading: const Icon(Icons.checklist, color: Colors.orange),
-          title: const Text('批量选择删除'),
-          subtitle: const Text('精确选择要删除的道具，支持预览'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-                builder: (_) => const GrenadeSelectDeleteScreen()),
-          ),
-        ),
-        ListTile(
-          leading: const Icon(Icons.cleaning_services,
-              color: Colors.lightBlueAccent),
-          title: const Text('清理孤儿媒体文件'),
-          subtitle: const Text('扫描并清理未被道具和自定义地图引用的媒体与残留记录'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => _scanAndCleanupOrphanMediaFiles(),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildLanSyncDebugSection() {
-    return _buildSection(
-      iconAsset: 'assets/icons/settings_debug.svg',
-      title: '调试信息',
-      subtitle: '仅 Debug 构建显示',
-      children: [
-        ListTile(
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-          title: const Text(
-            '局域网同步删除日志',
-            style: TextStyle(fontWeight: FontWeight.w600),
-          ),
-          subtitle: Text(
-            _isLoadingLanSyncDebug
-                ? '正在加载...'
-                : '共 ${_lanSyncTombstoneStats.grenadeCount + _lanSyncTombstoneStats.entityCount} 条',
-          ),
-          trailing: IconButton(
-            tooltip: '刷新',
-            onPressed: _isLoadingLanSyncDebug ? null : _loadLanSyncDebugInfo,
-            icon: const Icon(Icons.refresh),
-          ),
-        ),
-        _buildLanSyncDebugExpandedContent(),
-      ],
-    );
-  }
-
-  Widget _buildLanSyncDebugExpandedContent() {
-    if (_isLoadingLanSyncDebug) {
-      return const Padding(
-        padding: EdgeInsets.all(16),
-        child: Center(child: CircularProgressIndicator()),
-      );
-    }
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [
-          Chip(label: Text('道具删除 ${_lanSyncTombstoneStats.grenadeCount}')),
-          Chip(label: Text('其他删除 ${_lanSyncTombstoneStats.entityCount}')),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _loadLanSyncDebugInfo() async {
-    if (_isLoadingLanSyncDebug) return;
-    setState(() => _isLoadingLanSyncDebug = true);
-    try {
-      final store = LanSyncLocalStore();
-      await store.cleanupLegacySyncState();
-      await store.cleanupSyncTombstones();
-      final stats = await store.loadTombstoneStats();
-      if (!mounted) return;
-      setState(() {
-        _lanSyncTombstoneStats = stats;
-      });
-    } finally {
-      if (mounted) {
-        setState(() => _isLoadingLanSyncDebug = false);
-      }
-    }
-  }
-
-  Future<void> _scanAndCleanupOrphanMediaFiles() async {
-    final isar = ref.read(isarProvider);
-    final dataService = DataService(isar);
-
-    if (!mounted) return;
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => const AlertDialog(
-        content: Row(
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(width: 16),
-            Text('正在扫描孤儿媒体文件...'),
-          ],
-        ),
-      ),
-    );
-
-    late final OrphanMediaScanResult scanResult;
-    try {
-      scanResult = await dataService.scanOrphanMediaFiles();
-    } catch (e) {
-      if (!mounted) return;
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('扫描失败: $e'), backgroundColor: Colors.red),
-      );
-      return;
-    }
-
-    if (!mounted) return;
-    Navigator.pop(context);
-
-    if (!scanResult.hasAnythingToClean) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('未发现可清理的孤儿媒体文件')),
-      );
-      return;
-    }
-
-    final previewItems = scanResult.orphanFiles.take(8).toList(growable: false);
-    final summaryLines = <String>[];
-    if (scanResult.orphanFiles.isNotEmpty) {
-      summaryLines.add(
-        '共发现 ${scanResult.orphanFiles.length} 个未被引用的媒体文件，预计可释放 ${_formatBytes(scanResult.totalSizeBytes)}。',
-      );
-    }
-    if (scanResult.orphanRecordCount > 0) {
-      summaryLines.add(
-        '同时发现 ${scanResult.orphanRecordCount} 条无效残留数据库记录（步骤 ${scanResult.orphanStepIds.length} 条、媒体 ${scanResult.orphanMediaIds.length} 条），将一并清理。',
-      );
-    }
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('发现孤儿媒体文件'),
-        content: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(summaryLines.join('\n')),
-                if (previewItems.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  const Text(
-                    '示例文件：',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  ...previewItems.map(
-                    (item) => Padding(
-                      padding: const EdgeInsets.only(bottom: 6),
-                      child: Text(
-                        '${File(item.path).uri.pathSegments.isEmpty ? item.path : File(item.path).uri.pathSegments.last} · ${_formatBytes(item.sizeBytes)}',
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                    ),
-                  ),
-                  if (scanResult.orphanFiles.length > previewItems.length)
-                    Text(
-                      '还有 ${scanResult.orphanFiles.length - previewItems.length} 个文件未展开显示。',
-                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                    ),
-                ],
-              ],
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.lightBlueAccent,
-              foregroundColor: Colors.black,
-            ),
-            child: const Text('立即清理'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true || !mounted) return;
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => const AlertDialog(
-        content: Row(
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(width: 16),
-            Text('正在清理孤儿媒体文件...'),
-          ],
-        ),
-      ),
-    );
-
-    late final OrphanMediaCleanupResult cleanupResult;
-    try {
-      cleanupResult = await dataService.cleanupOrphanMediaFiles(
-        scanResult.orphanFiles,
-        orphanStepIds: scanResult.orphanStepIds,
-        orphanMediaIds: scanResult.orphanMediaIds,
-      );
-    } catch (e) {
-      if (!mounted) return;
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('清理失败: $e'), backgroundColor: Colors.red),
-      );
-      return;
-    }
-
-    if (!mounted) return;
-    Navigator.pop(context);
-    final failedCount = cleanupResult.failedFiles.length;
-    final successCount = cleanupResult.deletedFiles.length;
-    final recordCount = cleanupResult.deletedRecordCount;
-    final parts = <String>[];
-    if (successCount > 0 || failedCount == 0) {
-      parts.add(
-        '已清理 $successCount 个孤儿媒体文件，释放 ${_formatBytes(cleanupResult.deletedBytes)}',
-      );
-    }
-    if (recordCount > 0) {
-      parts.add('清除 $recordCount 条残留记录');
-    }
-    if (failedCount > 0) {
-      parts.add('失败 $failedCount 个（文件可能被其他程序占用）');
-    }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(parts.join('，')),
-        backgroundColor: failedCount == 0 ? Colors.green : Colors.orange,
-      ),
-    );
-  }
-
-  /// 删除地图道具对话框
-  Future<void> _showDeleteMapGrenadesDialog() async {
-    final isar = ref.read(isarProvider);
-    final maps = await isar.gameMaps.where().findAll();
-    if (maps.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('暂无地图数据')),
-        );
-      }
-      return;
-    }
-
-    // 预加载数据
-    final mapGrenadeCount = <int, int>{};
-    for (final map in maps) {
-      await map.layers.load();
-      int count = 0;
-      for (final layer in map.layers) {
-        await layer.grenades.load();
-        count += layer.grenades.length;
-      }
-      mapGrenadeCount[map.id] = count;
-    }
-
-    if (!mounted) return;
-    GameMap? selectedMap;
-    await showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Row(
-            children: [
-              Icon(Icons.delete_sweep, color: Colors.redAccent),
-              const SizedBox(width: 8),
-              const Text('清空地图道具'),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('选择要清空道具的地图：'),
-              const SizedBox(height: 16),
-              DropdownButtonFormField<GameMap>(
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
-                  contentPadding:
-                      EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                ),
-                hint: const Text('选择地图'),
-                initialValue: selectedMap,
-                items: maps.map((map) {
-                  final count = mapGrenadeCount[map.id] ?? 0;
-                  return DropdownMenuItem(
-                    value: map,
-                    child: _SettingsMapDropdownLabel(
-                      iconPath: map.iconPath,
-                      text: '${map.name} ($count 个道具)',
-                    ),
-                  );
-                }).toList(),
-                onChanged: (value) => setDialogState(() => selectedMap = value),
-              ),
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.red.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.warning, color: Colors.red[400], size: 20),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        '此操作不可撤销！所有道具及其媒体文件将被永久删除。',
-                        style: TextStyle(fontSize: 12, color: Colors.red[400]),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('取消'),
-            ),
-            ElevatedButton(
-              onPressed: selectedMap == null
-                  ? null
-                  : () async {
-                      Navigator.pop(ctx);
-                      await _performDeleteMapGrenades(selectedMap!);
-                    },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
-              ),
-              child: const Text('确认删除'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _showDeleteCustomMapsDialog() async {
-    final isar = ref.read(isarProvider);
-    final allMaps = await isar.gameMaps.where().findAll();
-    final customMaps =
-        allMaps.where(MapManagementService.isCustomMap).toList(growable: false);
-    if (customMaps.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('暂无可删除的自定义地图')),
-        );
-      }
-      return;
-    }
-
-    final selectedMapIds = <int>{};
-    if (!mounted) return;
-    await showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Row(
-            children: [
-              Icon(Icons.map_outlined, color: Colors.red[400]),
-              const SizedBox(width: 8),
-              const Text('删除自定义地图'),
-            ],
-          ),
-          content: SizedBox(
-            width: 420,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('勾选要删除的自定义地图：'),
-                const SizedBox(height: 12),
-                SizedBox(
-                  height: 280,
-                  child: ListView.builder(
-                    itemCount: customMaps.length,
-                    itemBuilder: (_, index) {
-                      final map = customMaps[index];
-                      final checked = selectedMapIds.contains(map.id);
-                      return CheckboxListTile(
-                        dense: true,
-                        controlAffinity: ListTileControlAffinity.leading,
-                        value: checked,
-                        title: _SettingsMapDropdownLabel(
-                          iconPath: map.iconPath,
-                          text: map.name,
-                        ),
-                        onChanged: (value) {
-                          setDialogState(() {
-                            if (value == true) {
-                              selectedMapIds.add(map.id);
-                            } else {
-                              selectedMapIds.remove(map.id);
-                            }
-                          });
-                        },
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  '已选择 ${selectedMapIds.length} 张地图',
-                  style: const TextStyle(fontSize: 12, color: Colors.grey),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('取消'),
-            ),
-            ElevatedButton(
-              onPressed: selectedMapIds.isEmpty
-                  ? null
-                  : () async {
-                      Navigator.pop(ctx);
-                      final targets = customMaps
-                          .where((m) => selectedMapIds.contains(m.id))
-                          .toList(growable: false);
-                      await _performDeleteCustomMaps(targets);
-                    },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
-              ),
-              child: const Text('删除选中'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _initializeBuiltinAreaMetadataForAllMaps() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('重导入默认区域标签/数据？'),
-        content: const Text('将为所有地图补齐内置默认区域标签与区域几何数据，不会删除你已有的自定义区域与标签。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.teal,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('开始导入'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true || !mounted) return;
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => const AlertDialog(
-        content: Row(
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(width: 16),
-            Text('正在导入默认区域标签与区域数据...'),
-          ],
-        ),
-      ),
-    );
-
-    try {
-      final isar = ref.read(isarProvider);
-      final tagService = TagService(isar);
-      final result = await tagService.initializeBuiltinAreaMetadataForAllMaps();
-
-      if (!mounted) return;
-      Navigator.pop(context);
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-              '已处理${result.processedMaps}张地图；标签预设${result.mapsWithPresets}张、区域预设${result.mapsWithAreaData}张；标签新增${result.addedTags}/更新${result.updatedTags}；区域新增${result.addedAreas}/更新${result.updatedAreas}/去重删除${result.removedDuplicateAreas}'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('重导入失败: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
-  }
-
-  /// 执行删除操作
-  Future<void> _performDeleteMapGrenades(GameMap map) async {
-    final isar = ref.read(isarProvider);
-    final dataService = DataService(isar);
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('二次确认'),
-        content: Text('确定要删除「${map.name}」地图的所有道具吗？\n\n此操作无法恢复！'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('确定删除'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed != true || !mounted) return;
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => const AlertDialog(
-        content: Row(
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(width: 16),
-            Text('正在删除...'),
-          ],
-        ),
-      ),
-    );
-
-    try {
-      final deletedCount = await dataService.deleteAllGrenadesForMap(map);
-      if (mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('已删除「${map.name}」的 $deletedCount 个道具'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('删除失败: $e'), backgroundColor: Colors.red),
-        );
-      }
-    }
-  }
-
-  Future<void> _performDeleteCustomMaps(List<GameMap> maps) async {
-    if (maps.isEmpty) return;
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('二次确认'),
-        content: Text(
-          '确定删除选中的 ${maps.length} 张自定义地图吗？\n\n这会删除地图及其所有关联数据，且不可恢复。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('确定删除'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => const AlertDialog(
-        content: Row(
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(width: 16),
-            Text('正在删除地图...'),
-          ],
-        ),
-      ),
-    );
-
-    try {
-      final isar = ref.read(isarProvider);
-      final deletedCount =
-          await MapManagementService(isar).deleteCustomMaps(maps);
-      if (!mounted) return;
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('已删除 $deletedCount 张自定义地图'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('删除失败: $e'), backgroundColor: Colors.red),
-      );
-    }
-  }
-
-  /// 更改目录
-  Future<void> _changeDataDirectory() async {
-    final result = await FilePicker.platform.getDirectoryPath(
-      dialogTitle: '选择数据存储目录',
-    );
-    if (result == null) return;
-
-    final oldPath = _currentDataPath;
-    final newPath = result;
-
-    if (mounted && oldPath != newPath) {
-      final shouldMigrate = await _showMigrationDialog();
-      if (shouldMigrate == true) {
-        // 执行迁移
-        await SettingsService.moveData(oldPath, newPath);
-      }
-    }
-
-    await widget.settingsService!.setCustomDataPath(result);
-    setState(() => _currentDataPath = result);
-
-    if (mounted) {
-      _showRestartDialog();
-    }
-  }
-
-  /// 恢复默认
-  Future<void> _resetToDefaultPath() async {
-    final oldPath = _currentDataPath;
-    final newPath = _defaultDataPath;
-
-    if (mounted && oldPath != newPath) {
-      final shouldMigrate = await _showMigrationDialog();
-      if (shouldMigrate == true) {
-        // 执行迁移
-        await SettingsService.moveData(oldPath, newPath);
-      }
-    }
-
-    await widget.settingsService!.setCustomDataPath(null);
-    setState(() => _currentDataPath = _defaultDataPath);
-
-    if (mounted) {
-      _showRestartDialog();
-    }
-  }
-
-  /// 迁移对话框
-  Future<bool?> _showMigrationDialog() {
-    return showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('迁移现有数据？'),
-        content: const Text('检测到您更改了数据目录。是否将当前目录下的所有数据（数据库、设置、存档等）自动拷贝到新目录下？'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('跳过'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.orange,
-              foregroundColor: Colors.black,
-            ),
-            child: const Text('立即迁移'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 重启提示
-  void _showRestartDialog() {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(Icons.restart_alt, color: Colors.orange),
-            const SizedBox(width: 8),
-            const Text('需要重启'),
-          ],
-        ),
-        content: const Text('数据目录已更改，请手动重启应用以使更改生效。'),
-        actions: [
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('我知道了'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 重置快捷键
   Future<void> _resetHotkeysToDefault() async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1548,13 +502,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         _hotkeys = widget.settingsService!.getHotkeys();
       });
       await widget.onHotkeysReset?.call();
-
-      // 通知重载热键
-      final hotkeysJson = <String, dynamic>{};
-      for (final entry in _hotkeys.entries) {
-        hotkeysJson[entry.key.name] = entry.value.toJson();
-      }
-      sendOverlayCommand('reload_hotkeys', {'hotkeys': hotkeysJson});
+      _notifyOverlayReloadHotkeys(_hotkeys);
       debugPrint('[Settings] Hotkeys reset, notified overlay to reload');
 
       if (mounted) {
@@ -1565,135 +513,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
-  Widget _buildSection({
-    required String iconAsset,
-    required String title,
-    String? subtitle,
-    bool danger = false,
-    required List<Widget> children,
-  }) {
-    return Card(
-      color: Colors.transparent,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Container(
-                  width: 34,
-                  height: 34,
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: (danger
-                            ? Theme.of(context).colorScheme.error
-                            : Theme.of(context).colorScheme.primary)
-                        .withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: SvgPicture.asset(
-                    iconAsset,
-                    colorFilter: ColorFilter.mode(
-                      danger
-                          ? Theme.of(context).colorScheme.error
-                          : Theme.of(context).colorScheme.primary,
-                      BlendMode.srcIn,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: danger
-                              ? Theme.of(context).colorScheme.error
-                              : null,
-                        ),
-                      ),
-                      if (subtitle != null)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 3),
-                          child: Text(
-                            subtitle,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey[500],
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          ...children,
-        ],
-      ),
-    );
-  }
-
-  String _formatBytes(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    const units = ['KB', 'MB', 'GB', 'TB'];
-    double size = bytes.toDouble();
-    var unitIndex = -1;
-    while (size >= 1024 && unitIndex < units.length - 1) {
-      size /= 1024;
-      unitIndex++;
-    }
-    final fractionDigits = size >= 100 ? 0 : 1;
-    return '${size.toStringAsFixed(fractionDigits)} ${units[unitIndex]}';
-  }
-
-  Widget _buildHotkeyTile(HotkeyAction action, String label) {
-    final config = _hotkeys[action];
-    final displayStr = config?.toDisplayString() ?? '未设置';
-
-    return ListTile(
-      title: Text(label),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color:
-                  Theme.of(context).colorScheme.primary.withValues(alpha: 0.10),
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: context.appTheme.subtleBorder),
-            ),
-            child: Text(
-              displayStr,
-              style: TextStyle(
-                fontFamily: 'monospace',
-                fontWeight: FontWeight.w500,
-                color: Theme.of(context).colorScheme.primary,
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          IconButton(
-            icon: const Icon(Icons.edit, size: 20),
-            onPressed: () => _showHotkeyEditor(action, label),
-          ),
-        ],
-      ),
-    );
-  }
-
   void _showHotkeyEditor(HotkeyAction action, String label) {
     showDialog(
       context: context,
-      builder: (context) => _HotkeyEditorDialog(
+      builder: (_) => HotkeyEditorDialog(
         action: action,
         label: label,
         currentConfig: _hotkeys[action],
@@ -1722,11 +545,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               await widget.onHotkeyChanged!(action, newConfig);
             }
 
-            final hotkeysJson = <String, dynamic>{};
-            for (final entry in hotkeys.entries) {
-              hotkeysJson[entry.key.name] = entry.value.toJson();
-            }
-            sendOverlayCommand('reload_hotkeys', {'hotkeys': hotkeysJson});
+            _notifyOverlayReloadHotkeys(hotkeys);
             debugPrint('[Settings] Hotkey changed, notified overlay to reload');
             return null;
           } on HotkeyConflictException catch (e) {
@@ -1738,6 +557,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         },
       ),
     );
+  }
+
+  void _notifyOverlayReloadHotkeys(Map<HotkeyAction, HotkeyConfig> hotkeys) {
+    final hotkeysJson = <String, dynamic>{};
+    for (final entry in hotkeys.entries) {
+      hotkeysJson[entry.key.name] = entry.value.toJson();
+    }
+    sendOverlayCommand('reload_hotkeys', {'hotkeys': hotkeysJson});
   }
 
   HotkeyAction? _findConflictingAction(
@@ -1755,281 +582,5 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
   String _hotkeyLabel(HotkeyAction action) {
     return _hotkeyActionLabels[action] ?? action.name;
-  }
-
-  Widget _buildColorPickerRow() {
-    final colors = [
-      0xFFE040FB, // PurpleAccent (Default)
-      0xFF448AFF, // BlueAccent
-      0xFF18FFFF, // CyanAccent
-      0xFF69F0AE, // GreenAccent
-      0xFFFFAB40, // OrangeAccent
-      0xFFFF5252, // RedAccent
-      0xFFFFFFFF, // White
-    ];
-
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: colors.map((colorValue) {
-        final isSelected = _mapLineColor == colorValue;
-        return GestureDetector(
-          onTap: () async {
-            setState(() => _mapLineColor = colorValue);
-            ref.read(mapLineColorProvider.notifier).state = colorValue;
-            if (widget.settingsService != null) {
-              await widget.settingsService!.setMapLineColor(colorValue);
-            }
-          },
-          child: Container(
-            margin: const EdgeInsets.only(right: 12),
-            width: 24,
-            height: 24,
-            decoration: BoxDecoration(
-              color: Color(colorValue),
-              shape: BoxShape.circle,
-              border: Border.all(
-                color: isSelected ? Colors.white : Colors.transparent,
-                width: 2,
-              ),
-              boxShadow: isSelected
-                  ? [
-                      BoxShadow(
-                        color: Color(colorValue).withValues(alpha: 0.5),
-                        blurRadius: 6,
-                        spreadRadius: 2,
-                      )
-                    ]
-                  : null,
-            ),
-            child: isSelected
-                ? const Icon(Icons.check, size: 16, color: Colors.black54)
-                : null,
-          ),
-        );
-      }).toList(),
-    );
-  }
-}
-
-class _SettingsMapDropdownLabel extends StatelessWidget {
-  final String iconPath;
-  final String text;
-
-  const _SettingsMapDropdownLabel({
-    required this.iconPath,
-    required this.text,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        MapIcon(path: iconPath, size: 20),
-        const SizedBox(width: 10),
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 220),
-          child: Text(
-            text,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// 快捷键编辑对话框
-class _HotkeyEditorDialog extends StatefulWidget {
-  final HotkeyAction action;
-  final String label;
-  final HotkeyConfig? currentConfig;
-  final Future<String?> Function(HotkeyConfig) onSave;
-
-  const _HotkeyEditorDialog({
-    required this.action,
-    required this.label,
-    required this.currentConfig,
-    required this.onSave,
-  });
-
-  @override
-  State<_HotkeyEditorDialog> createState() => _HotkeyEditorDialogState();
-}
-
-class _HotkeyEditorDialogState extends State<_HotkeyEditorDialog> {
-  HotkeyConfig? _newConfig;
-  final FocusNode _focusNode = FocusNode();
-  bool _isListening = false;
-  bool _isSaving = false;
-  String? _errorText;
-
-  @override
-  void initState() {
-    super.initState();
-    _newConfig = widget.currentConfig;
-  }
-
-  @override
-  void dispose() {
-    _focusNode.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text('设置快捷键: ${widget.label}'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            '当前: ${widget.currentConfig?.toDisplayString() ?? "未设置"}',
-            style: TextStyle(color: Colors.grey[500]),
-          ),
-          const SizedBox(height: 24),
-          KeyboardListener(
-            focusNode: _focusNode,
-            autofocus: true,
-            onKeyEvent: (event) {
-              if (event is KeyDownEvent && _isListening) {
-                // 过滤掉单独的修饰键
-                if (_isModifierKey(event.logicalKey)) return;
-
-                final modifiers = <LogicalKeyboardKey>{};
-                if (HardwareKeyboard.instance.isAltPressed) {
-                  modifiers.add(LogicalKeyboardKey.alt);
-                }
-                if (HardwareKeyboard.instance.isControlPressed) {
-                  modifiers.add(LogicalKeyboardKey.control);
-                }
-                if (HardwareKeyboard.instance.isShiftPressed) {
-                  modifiers.add(LogicalKeyboardKey.shift);
-                }
-
-                setState(() {
-                  _newConfig = HotkeyConfig(
-                    key: event.logicalKey,
-                    modifiers: modifiers,
-                  );
-                  _isListening = false;
-                  _errorText = null;
-                });
-              }
-            },
-            child: GestureDetector(
-              onTap: () {
-                setState(() {
-                  _isListening = true;
-                  _errorText = null;
-                });
-                _focusNode.requestFocus();
-              },
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(24),
-                decoration: BoxDecoration(
-                  color: _isListening
-                      ? Theme.of(context)
-                          .colorScheme
-                          .primary
-                          .withValues(alpha: 0.1)
-                      : Colors.grey.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: _isListening
-                        ? Theme.of(context).colorScheme.primary
-                        : Colors.grey,
-                    width: 2,
-                  ),
-                ),
-                child: Column(
-                  children: [
-                    Icon(
-                      _isListening ? Icons.keyboard : Icons.touch_app,
-                      size: 40,
-                      color: _isListening
-                          ? Theme.of(context).colorScheme.primary
-                          : Colors.grey,
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      _isListening
-                          ? '请按下新的快捷键组合...'
-                          : _newConfig?.toDisplayString() ?? '点击此处开始设置',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w500,
-                        color: _isListening
-                            ? Theme.of(context).colorScheme.primary
-                            : null,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          if (_errorText != null) ...[
-            const SizedBox(height: 12),
-            Text(
-              _errorText!,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
-          ],
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: _isSaving ? null : () => Navigator.pop(context),
-          child: const Text('取消'),
-        ),
-        ElevatedButton(
-          onPressed: _newConfig != null && !_isSaving
-              ? () async {
-                  setState(() {
-                    _isSaving = true;
-                    _errorText = null;
-                  });
-
-                  final error = await widget.onSave(_newConfig!);
-                  if (!mounted || !context.mounted) return;
-
-                  if (error == null) {
-                    Navigator.pop(context);
-                    return;
-                  }
-
-                  setState(() {
-                    _isSaving = false;
-                    _errorText = error;
-                  });
-                }
-              : null,
-          child: _isSaving
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Text('保存'),
-        ),
-      ],
-    );
-  }
-
-  bool _isModifierKey(LogicalKeyboardKey key) {
-    return key == LogicalKeyboardKey.alt ||
-        key == LogicalKeyboardKey.altLeft ||
-        key == LogicalKeyboardKey.altRight ||
-        key == LogicalKeyboardKey.control ||
-        key == LogicalKeyboardKey.controlLeft ||
-        key == LogicalKeyboardKey.controlRight ||
-        key == LogicalKeyboardKey.shift ||
-        key == LogicalKeyboardKey.shiftLeft ||
-        key == LogicalKeyboardKey.shiftRight ||
-        key == LogicalKeyboardKey.meta ||
-        key == LogicalKeyboardKey.metaLeft ||
-        key == LogicalKeyboardKey.metaRight;
   }
 }
