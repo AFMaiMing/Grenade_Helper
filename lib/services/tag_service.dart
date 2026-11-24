@@ -1,169 +1,31 @@
-import 'dart:convert';
-
 import 'package:flutter/foundation.dart';
 import 'package:isar_community/isar.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import '../models/tag.dart';
-import '../models/grenade_tag.dart';
-import '../data/map_area_presets.dart';
-import '../data/builtin_area_region_presets.dart';
-import '../models/map_area.dart';
+
 import '../models.dart';
+import '../models/grenade_tag.dart';
+import '../models/map_area.dart';
+import '../models/tag.dart';
 import 'lan_sync/lan_sync_local_store.dart';
+import 'tag/builtin_area_importer.dart';
+import 'tag/system_tag_ensurer.dart';
+import 'tag/tag_sync_models.dart';
 import 'tag_uuid_service.dart';
 
-class DefaultAreaTagReimportSummary {
-  final int processedMaps;
-  final int mapsWithPresets;
-  final int addedTags;
-  final int updatedTags;
-  final int mapsWithAreaData;
-  final int addedAreas;
-  final int updatedAreas;
-  final int removedDuplicateAreas;
-  final List<AreaTagSyncDetail> addedTagDetails;
-  final List<AreaTagSyncDetail> updatedTagDetails;
-
-  const DefaultAreaTagReimportSummary({
-    required this.processedMaps,
-    required this.mapsWithPresets,
-    required this.addedTags,
-    required this.updatedTags,
-    required this.mapsWithAreaData,
-    required this.addedAreas,
-    required this.updatedAreas,
-    required this.removedDuplicateAreas,
-    this.addedTagDetails = const <AreaTagSyncDetail>[],
-    this.updatedTagDetails = const <AreaTagSyncDetail>[],
-  });
-}
-
-class AreaTagSyncDetail {
-  final int mapId;
-  final String mapName;
-  final int? tagId;
-  final String tagName;
-  final String oldTagUuid;
-  final String newTagUuid;
-  final int oldColorValue;
-  final int newColorValue;
-
-  const AreaTagSyncDetail({
-    required this.mapId,
-    required this.mapName,
-    required this.tagId,
-    required this.tagName,
-    required this.oldTagUuid,
-    required this.newTagUuid,
-    required this.oldColorValue,
-    required this.newColorValue,
-  });
-
-  String get reasonSummary {
-    final reasons = <String>[];
-    if (oldTagUuid != newTagUuid) reasons.add('UUID变化');
-    if (oldColorValue != newColorValue) reasons.add('颜色变化');
-    return reasons.isEmpty ? '无变化' : reasons.join('、');
-  }
-}
-
-class EnsureSystemTagSummary {
-  final int processedMaps;
-  final int addedTags;
-  final int updatedTags;
-  final int removedObsoleteTags;
-  final int keptObsoleteTagsInUse;
-  final List<ObsoleteSystemTagUsageInfo> keptObsoleteTagDetails;
-
-  const EnsureSystemTagSummary({
-    required this.processedMaps,
-    required this.addedTags,
-    required this.updatedTags,
-    required this.removedObsoleteTags,
-    required this.keptObsoleteTagsInUse,
-    this.keptObsoleteTagDetails = const <ObsoleteSystemTagUsageInfo>[],
-  });
-}
-
-class ObsoleteSystemTagUsageInfo {
-  final int mapId;
-  final String mapName;
-  final int tagId;
-  final String tagName;
-  final String tagUuid;
-  final int dimension;
-  final List<String> grenadeRefs;
-  final List<String> areaRefs;
-
-  const ObsoleteSystemTagUsageInfo({
-    required this.mapId,
-    required this.mapName,
-    required this.tagId,
-    required this.tagName,
-    required this.tagUuid,
-    required this.dimension,
-    this.grenadeRefs = const <String>[],
-    this.areaRefs = const <String>[],
-  });
-
-  String get dimensionName => TagDimension.getName(dimension);
-}
-
-class TagUuidMigrationSummary {
-  final int migratedCount;
-  final List<TagUuidMigrationDetail> details;
-
-  const TagUuidMigrationSummary({
-    required this.migratedCount,
-    this.details = const <TagUuidMigrationDetail>[],
-  });
-}
-
-class TagUuidMigrationDetail {
-  final int tagId;
-  final int mapId;
-  final String mapName;
-  final String tagName;
-  final int dimension;
-  final bool isSystem;
-  final String oldUuid;
-  final String newUuid;
-  final String reason;
-
-  const TagUuidMigrationDetail({
-    required this.tagId,
-    required this.mapId,
-    required this.mapName,
-    required this.tagName,
-    required this.dimension,
-    required this.isSystem,
-    required this.oldUuid,
-    required this.newUuid,
-    required this.reason,
-  });
-
-  String get dimensionName => TagDimension.getName(dimension);
-}
+export 'tag/tag_sync_models.dart'
+    show
+        DefaultAreaTagReimportSummary,
+        AreaTagSyncDetail,
+        EnsureSystemTagSummary,
+        ObsoleteSystemTagUsageInfo,
+        TagUuidMigrationSummary,
+        TagUuidMigrationDetail;
 
 class TagService {
   final Isar isar;
-  static const String _deletedSystemTagPrefsPrefix =
-      'tag_service.deleted_system_tag_uuids.v1';
-  static Future<SharedPreferences>? _prefsFuture;
+  late final SystemTagEnsurer _systemEnsurer = SystemTagEnsurer(isar);
+  late final BuiltinAreaImporter _areaImporter = BuiltinAreaImporter(isar);
 
   TagService(this.isar);
-
-  static Future<SharedPreferences> _prefs() {
-    return _prefsFuture ??= SharedPreferences.getInstance();
-  }
-
-  String _deletedSystemTagPrefsKey(int mapId) {
-    return '$_deletedSystemTagPrefsPrefix.$mapId';
-  }
-
-  String _normalizeTagUuid(String value) {
-    return value.trim().toLowerCase();
-  }
 
   Future<void> _touchGrenadeForTagRelationChange(int grenadeId) async {
     final grenade = await isar.grenades.get(grenadeId);
@@ -175,823 +37,35 @@ class TagService {
     });
   }
 
-  Future<Set<String>> _loadDeletedSystemTagUuids(int mapId) async {
-    final prefs = await _prefs();
-    final values = prefs.getStringList(_deletedSystemTagPrefsKey(mapId)) ??
-        const <String>[];
-    return values.map(_normalizeTagUuid).where((e) => e.isNotEmpty).toSet();
+  Future<void> clearDeletedSystemTagRecordsForMap(int mapId) {
+    return _systemEnsurer.clearDeletedRecordsForMap(mapId);
   }
 
-  Future<void> _markDeletedSystemTagUuid(int mapId, String tagUuid) async {
-    final normalized = _normalizeTagUuid(tagUuid);
-    if (normalized.isEmpty) return;
-
-    final prefs = await _prefs();
-    final key = _deletedSystemTagPrefsKey(mapId);
-    final current = (prefs.getStringList(key) ?? const <String>[])
-        .map(_normalizeTagUuid)
-        .where((e) => e.isNotEmpty)
-        .toSet();
-    if (!current.add(normalized)) return;
-    await prefs.setStringList(key, current.toList()..sort());
-  }
-
-  Future<void> _clearDeletedSystemTagUuid(int mapId, String tagUuid) async {
-    final normalized = _normalizeTagUuid(tagUuid);
-    if (normalized.isEmpty) return;
-
-    final prefs = await _prefs();
-    final key = _deletedSystemTagPrefsKey(mapId);
-    final current = (prefs.getStringList(key) ?? const <String>[])
-        .map(_normalizeTagUuid)
-        .where((e) => e.isNotEmpty)
-        .toSet();
-    if (!current.remove(normalized)) return;
-    if (current.isEmpty) {
-      await prefs.remove(key);
-      return;
-    }
-    await prefs.setStringList(key, current.toList()..sort());
-  }
-
-  Future<void> clearDeletedSystemTagRecordsForMap(int mapId) async {
-    final prefs = await _prefs();
-    await prefs.remove(_deletedSystemTagPrefsKey(mapId));
-  }
-
-  /// 初始化地图的系统标签
+  /// 初始化地图的系统标签并首次导入内置区域几何数据。
   Future<void> initializeSystemTags(int mapId, String mapName) async {
     final map = await isar.gameMaps.get(mapId);
     if (map == null) return;
 
-    await _ensureSystemTagsForMap(
-      map,
-      mapNameFallback: mapName,
-    );
-
-    // 首次初始化时尝试导入内置区域几何数据（不覆盖任何已有区域）。
-    await _reimportBuiltinAreaDataForMap(
-      map,
-      overwriteExisting: false,
-    );
+    await _systemEnsurer.ensureForMap(map, mapNameFallback: mapName);
+    await _areaImporter.importMissingAreasForMap(map);
   }
 
   Future<EnsureSystemTagSummary> ensureSystemTagsForAllMaps({
     bool cleanupObsoleteSystemTags = true,
-  }) async {
-    final maps = await isar.gameMaps.where().findAll();
-    if (maps.isEmpty) {
-      return const EnsureSystemTagSummary(
-        processedMaps: 0,
-        addedTags: 0,
-        updatedTags: 0,
-        removedObsoleteTags: 0,
-        keptObsoleteTagsInUse: 0,
-        keptObsoleteTagDetails: <ObsoleteSystemTagUsageInfo>[],
-      );
-    }
-
-    int added = 0;
-    int updated = 0;
-    int removed = 0;
-    int keptInUse = 0;
-    final keptDetails = <ObsoleteSystemTagUsageInfo>[];
-    for (final map in maps) {
-      final result = await _ensureSystemTagsForMap(
-        map,
-        cleanupObsoleteSystemTags: cleanupObsoleteSystemTags,
-      );
-      added += result.addedTags;
-      updated += result.updatedTags;
-      removed += result.removedObsoleteTags;
-      keptInUse += result.keptObsoleteTagsInUse;
-      keptDetails.addAll(result.keptObsoleteTagDetails);
-    }
-    return EnsureSystemTagSummary(
-      processedMaps: maps.length,
-      addedTags: added,
-      updatedTags: updated,
-      removedObsoleteTags: removed,
-      keptObsoleteTagsInUse: keptInUse,
-      keptObsoleteTagDetails: keptDetails,
-    );
-  }
-
-  Future<_EnsureSystemTagForMapResult> _ensureSystemTagsForMap(
-    GameMap map, {
-    String? mapNameFallback,
-    bool cleanupObsoleteSystemTags = false,
-  }) async {
-    final mapName = map.name.trim().isNotEmpty
-        ? map.name
-        : (mapNameFallback?.trim().isNotEmpty == true
-            ? mapNameFallback!.trim()
-            : 'unknown');
-    final required = _buildRequiredSystemTagDefs(
-      map: map,
-    );
-    if (required.isEmpty) {
-      return const _EnsureSystemTagForMapResult(
-        addedTags: 0,
-        updatedTags: 0,
-        removedObsoleteTags: 0,
-        keptObsoleteTagsInUse: 0,
-        keptObsoleteTagDetails: <ObsoleteSystemTagUsageInfo>[],
-      );
-    }
-
-    final existingTags =
-        await isar.tags.filter().mapIdEqualTo(map.id).findAll();
-    final byAnyKey = <String, Tag>{};
-    final bySystemKey = <String, Tag>{};
-    final bySystemUuid = <String, Tag>{};
-    int nextOrder = 0;
-    for (final tag in existingTags) {
-      final key = _systemTagKey(tag.dimension, tag.name);
-      byAnyKey.putIfAbsent(key, () => tag);
-      if (tag.isSystem) {
-        bySystemKey.putIfAbsent(key, () => tag);
-        final normalizedUuid = _normalizeTagUuid(tag.tagUuid);
-        if (normalizedUuid.isNotEmpty) {
-          bySystemUuid.putIfAbsent(normalizedUuid, () => tag);
-        }
-      }
-      if (tag.sortOrder >= nextOrder) {
-        nextOrder = tag.sortOrder + 1;
-      }
-    }
-
-    final toCreate = <Tag>[];
-    final toUpdate = <Tag>[];
-    final requiredUuids = <String>{};
-    final requiredKeys =
-        required.map((e) => _systemTagKey(e.dimension, e.name)).toSet();
-    final deletedSystemTagUuids = await _loadDeletedSystemTagUuids(map.id);
-    for (final def in required) {
-      final key = _systemTagKey(def.dimension, def.name);
-      final expectedUuid = TagUuidService.buildSystemTagUuid(
-        mapName: mapName,
-        mapIconPath: map.iconPath,
-        dimension: def.dimension,
-        tagName: def.name,
-      );
-      final normalizedExpectedUuid = _normalizeTagUuid(expectedUuid);
-      requiredUuids.add(normalizedExpectedUuid);
-
-      final uuidMatched = bySystemUuid[normalizedExpectedUuid];
-      final keyMatched = bySystemKey[key] ?? byAnyKey[key];
-      final existing = uuidMatched ?? keyMatched;
-
-      if (uuidMatched == null &&
-          deletedSystemTagUuids.contains(normalizedExpectedUuid)) {
-        continue;
-      }
-
-      if (existing == null) {
-        final created = Tag(
-          tagUuid: expectedUuid,
-          name: def.name,
-          colorValue: def.colorValue,
-          dimension: def.dimension,
-          isSystem: true,
-          sortOrder: nextOrder++,
-          mapId: map.id,
-        );
-        toCreate.add(created);
-        byAnyKey[key] = created;
-        bySystemKey[key] = created;
-        continue;
-      }
-
-      var changed = false;
-      if (!existing.isSystem) {
-        existing.isSystem = true;
-        changed = true;
-      }
-      final preserveUserOverrides = uuidMatched != null &&
-          _systemTagKey(existing.dimension, existing.name) != key;
-      if (!preserveUserOverrides && existing.colorValue != def.colorValue) {
-        existing.colorValue = def.colorValue;
-        changed = true;
-      }
-      if (!preserveUserOverrides && existing.tagUuid.trim() != expectedUuid) {
-        existing.tagUuid = expectedUuid;
-        changed = true;
-      }
-      if (changed) {
-        existing.updatedAt = DateTime.now();
-        toUpdate.add(existing);
-      }
-
-      await _clearDeletedSystemTagUuid(map.id, expectedUuid);
-    }
-
-    final staleDeleteIds = <int>{};
-    int keptStaleInUse = 0;
-    final keptStaleDetails = <ObsoleteSystemTagUsageInfo>[];
-    if (cleanupObsoleteSystemTags) {
-      final staleSystemTags = existingTags.where((tag) {
-        if (!tag.isSystem) return false;
-        final key = _systemTagKey(tag.dimension, tag.name);
-        final normalizedUuid = _normalizeTagUuid(tag.tagUuid);
-        return !requiredKeys.contains(key) &&
-            !requiredUuids.contains(normalizedUuid);
-      });
-
-      Map<int, String>? layerNameById;
-      for (final stale in staleSystemTags) {
-        final grenadeBindings =
-            await isar.grenadeTags.filter().tagIdEqualTo(stale.id).findAll();
-        final areas =
-            await isar.mapAreas.filter().tagIdEqualTo(stale.id).findAll();
-        if (grenadeBindings.isNotEmpty || areas.isNotEmpty) {
-          keptStaleInUse++;
-          if (areas.isNotEmpty && layerNameById == null) {
-            await map.layers.load();
-            layerNameById = {
-              for (final layer in map.layers) layer.id: layer.name,
-            };
-          }
-          keptStaleDetails.add(
-            await _buildObsoleteSystemTagUsageInfo(
-              map: map,
-              tag: stale,
-              grenadeBindings: grenadeBindings,
-              areas: areas,
-              layerNameById: layerNameById ?? const <int, String>{},
-            ),
-          );
-          continue;
-        }
-        staleDeleteIds.add(stale.id);
-      }
-    }
-
-    if (toCreate.isEmpty && toUpdate.isEmpty && staleDeleteIds.isEmpty) {
-      return _EnsureSystemTagForMapResult(
-        addedTags: 0,
-        updatedTags: 0,
-        removedObsoleteTags: 0,
-        keptObsoleteTagsInUse: keptStaleInUse,
-        keptObsoleteTagDetails: keptStaleDetails,
-      );
-    }
-
-    await isar.writeTxn(() async {
-      if (toCreate.isNotEmpty) {
-        await isar.tags.putAll(toCreate);
-      }
-      if (toUpdate.isNotEmpty) {
-        await isar.tags.putAll(toUpdate);
-      }
-      for (final tagId in staleDeleteIds) {
-        await isar.tags.delete(tagId);
-      }
-    });
-
-    return _EnsureSystemTagForMapResult(
-      addedTags: toCreate.length,
-      updatedTags: toUpdate.length,
-      removedObsoleteTags: staleDeleteIds.length,
-      keptObsoleteTagsInUse: keptStaleInUse,
-      keptObsoleteTagDetails: keptStaleDetails,
-    );
-  }
-
-  Future<ObsoleteSystemTagUsageInfo> _buildObsoleteSystemTagUsageInfo({
-    required GameMap map,
-    required Tag tag,
-    required List<GrenadeTag> grenadeBindings,
-    required List<MapArea> areas,
-    required Map<int, String> layerNameById,
-  }) async {
-    final grenadeRefs = <String>[];
-    for (final binding in grenadeBindings) {
-      final grenade = await isar.grenades.get(binding.grenadeId);
-      if (grenade == null) continue;
-      grenadeRefs.add('${grenade.title}#${grenade.id}');
-    }
-    grenadeRefs.sort();
-
-    final areaRefs = areas.map((area) {
-      final layerName = area.layerId == null
-          ? 'Default'
-          : (layerNameById[area.layerId!] ?? '未知楼层');
-      return '${area.name}@$layerName#${area.id}';
-    }).toList()
-      ..sort();
-
-    return ObsoleteSystemTagUsageInfo(
-      mapId: map.id,
-      mapName: map.name,
-      tagId: tag.id,
-      tagName: tag.name,
-      tagUuid: tag.tagUuid,
-      dimension: tag.dimension,
-      grenadeRefs: grenadeRefs,
-      areaRefs: areaRefs,
-    );
-  }
-
-  List<_SystemTagDef> _buildRequiredSystemTagDefs({
-    required GameMap map,
   }) {
-    final result = <_SystemTagDef>[];
-    final seenKeys = <String>{};
-
-    void addDef({
-      required int dimension,
-      required String name,
-      required int colorValue,
-    }) {
-      final key = _systemTagKey(dimension, name);
-      if (seenKeys.contains(key)) return;
-      seenKeys.add(key);
-      result.add(_SystemTagDef(
-        dimension: dimension,
-        name: name,
-        colorValue: colorValue,
-      ));
-    }
-
-    for (final entry in commonSystemTags.entries) {
-      final color = dimensionColors[entry.key] ?? 0xFF607D8B;
-      for (final name in entry.value) {
-        addDef(
-          dimension: entry.key,
-          name: name,
-          colorValue: color,
-        );
-      }
-    }
-
-    final areaNames = _resolveAreaPresetNames(map) ?? const <String>[];
-    final areaColor = dimensionColors[TagDimension.area] ?? 0xFF4CAF50;
-    for (final name in areaNames) {
-      addDef(
-        dimension: TagDimension.area,
-        name: name,
-        colorValue: areaColor,
-      );
-    }
-
-    return result;
-  }
-
-  String _systemTagKey(int dimension, String name) {
-    return '$dimension|${name.trim().toLowerCase()}';
+    return _systemEnsurer.ensureForAllMaps(
+      cleanupObsoleteSystemTags: cleanupObsoleteSystemTags,
+    );
   }
 
   /// 为所有地图补齐内置区域标签与区域几何数据（非破坏性）。
   Future<DefaultAreaTagReimportSummary>
-      initializeBuiltinAreaMetadataForAllMaps() async {
-    final maps = await isar.gameMaps.where().findAll();
-    if (maps.isEmpty) {
-      return const DefaultAreaTagReimportSummary(
-        processedMaps: 0,
-        mapsWithPresets: 0,
-        addedTags: 0,
-        updatedTags: 0,
-        mapsWithAreaData: 0,
-        addedAreas: 0,
-        updatedAreas: 0,
-        removedDuplicateAreas: 0,
-        addedTagDetails: <AreaTagSyncDetail>[],
-        updatedTagDetails: <AreaTagSyncDetail>[],
-      );
-    }
-
-    final areaColor = dimensionColors[TagDimension.area] ?? 0xFF4CAF50;
-    int mapsWithPresets = 0;
-    int addedTags = 0;
-    int updatedTags = 0;
-    int mapsWithAreaData = 0;
-    int addedAreas = 0;
-    int updatedAreas = 0;
-    int removedDuplicateAreas = 0;
-    final addedTagDetails = <AreaTagSyncDetail>[];
-    final updatedTagDetails = <AreaTagSyncDetail>[];
-
-    for (final map in maps) {
-      final presetNames = _resolveAreaPresetNames(map) ?? const <String>[];
-      final builtinAreaData = _resolveBuiltinAreaRegionPresets(map) ??
-          const <String, List<BuiltinAreaPreset>>{};
-
-      final requiredNames = <String>{
-        ...presetNames,
-        ...builtinAreaData.values.expand((list) => list.map((e) => e.name)),
-      };
-      if (requiredNames.isEmpty) continue;
-
-      if (presetNames.isNotEmpty) {
-        mapsWithPresets++;
-      }
-      if (builtinAreaData.isNotEmpty) {
-        mapsWithAreaData++;
-      }
-
-      final allMapTags =
-          await isar.tags.filter().mapIdEqualTo(map.id).findAll();
-      final existingAreaTags = allMapTags
-          .where((tag) => tag.dimension == TagDimension.area)
-          .toList();
-
-      final maxOrderTag = await isar.tags
-          .filter()
-          .mapIdEqualTo(map.id)
-          .sortBySortOrderDesc()
-          .findFirst();
-      int nextOrder = (maxOrderTag?.sortOrder ?? 0) + 1;
-
-      final toCreate = <Tag>[];
-      final toUpdate = <Tag>[];
-
-      for (final name in requiredNames) {
-        final expectedUuid = TagUuidService.buildSystemTagUuid(
-          mapName: map.name,
-          mapIconPath: map.iconPath,
-          dimension: TagDimension.area,
-          tagName: name,
-        );
-        final sameNameTags = existingAreaTags.where((tag) => tag.name == name);
-        final existing = sameNameTags
-                .where((tag) => tag.tagUuid == expectedUuid)
-                .cast<Tag?>()
-                .firstOrNull ??
-            sameNameTags
-                .where((tag) => tag.isSystem)
-                .cast<Tag?>()
-                .firstOrNull ??
-            sameNameTags.cast<Tag?>().firstOrNull;
-        if (existing == null) {
-          final created = Tag(
-            tagUuid: expectedUuid,
-            name: name,
-            colorValue: areaColor,
-            dimension: TagDimension.area,
-            isSystem: true,
-            sortOrder: nextOrder++,
-            mapId: map.id,
-          );
-          toCreate.add(created);
-          addedTagDetails.add(
-            AreaTagSyncDetail(
-              mapId: map.id,
-              mapName: map.name,
-              tagId: null,
-              tagName: name,
-              oldTagUuid: '',
-              newTagUuid: created.tagUuid,
-              oldColorValue: 0,
-              newColorValue: created.colorValue,
-            ),
-          );
-          continue;
-        }
-
-        if (existing.isSystem) {
-          final uuidOccupiedByOther = allMapTags.any(
-            (tag) => tag.id != existing.id && tag.tagUuid == expectedUuid,
-          );
-          final changed = existing.colorValue != areaColor ||
-              (!uuidOccupiedByOther && existing.tagUuid != expectedUuid);
-          if (changed) {
-            final oldTagUuid = existing.tagUuid;
-            final oldColorValue = existing.colorValue;
-            existing.colorValue = areaColor;
-            if (!uuidOccupiedByOther) {
-              existing.tagUuid = expectedUuid;
-            }
-            existing.updatedAt = DateTime.now();
-            toUpdate.add(existing);
-            updatedTagDetails.add(
-              AreaTagSyncDetail(
-                mapId: map.id,
-                mapName: map.name,
-                tagId: existing.id,
-                tagName: existing.name,
-                oldTagUuid: oldTagUuid,
-                newTagUuid: expectedUuid,
-                oldColorValue: oldColorValue,
-                newColorValue: areaColor,
-              ),
-            );
-          }
-        }
-      }
-
-      if (toCreate.isNotEmpty || toUpdate.isNotEmpty) {
-        await isar.writeTxn(() async {
-          for (final tag in toCreate) {
-            await isar.tags.put(tag);
-          }
-          for (final tag in toUpdate) {
-            await isar.tags.put(tag);
-          }
-        });
-
-        addedTags += toCreate.length;
-        updatedTags += toUpdate.length;
-      }
-
-      final upsertSummary = await _reimportBuiltinAreaDataForMap(
-        map,
-        overwriteExisting: true,
-      );
-      addedAreas += upsertSummary.addedAreas;
-      updatedAreas += upsertSummary.updatedAreas;
-      removedDuplicateAreas += upsertSummary.removedDuplicateAreas;
-    }
-
-    return DefaultAreaTagReimportSummary(
-      processedMaps: maps.length,
-      mapsWithPresets: mapsWithPresets,
-      addedTags: addedTags,
-      updatedTags: updatedTags,
-      mapsWithAreaData: mapsWithAreaData,
-      addedAreas: addedAreas,
-      updatedAreas: updatedAreas,
-      removedDuplicateAreas: removedDuplicateAreas,
-      addedTagDetails: addedTagDetails,
-      updatedTagDetails: updatedTagDetails,
-    );
+      initializeBuiltinAreaMetadataForAllMaps() {
+    return _areaImporter.initializeForAllMaps();
   }
 
-  List<String>? _resolveAreaPresetNames(GameMap map) {
-    final lowerName = map.name.trim().toLowerCase();
-    if (mapAreaPresets.containsKey(lowerName)) {
-      return mapAreaPresets[lowerName];
-    }
-
-    final iconPath = map.iconPath;
-    final iconMatch = RegExp(
-      r'assets[\\/]+icons[\\/]+(.+?)_icon\.svg$',
-      caseSensitive: false,
-    ).firstMatch(iconPath);
-    if (iconMatch != null && iconMatch.groupCount >= 1) {
-      final key = iconMatch.group(1)?.toLowerCase();
-      if (key != null && mapAreaPresets.containsKey(key)) {
-        return mapAreaPresets[key];
-      }
-    }
-
-    final normalized = lowerName.replaceAll(RegExp(r'[^a-z0-9]+'), '');
-    return mapAreaPresets[normalized];
-  }
-
-  Map<String, List<BuiltinAreaPreset>>? _resolveBuiltinAreaRegionPresets(
-      GameMap map) {
-    final lowerName = map.name.trim().toLowerCase();
-    if (builtinAreaRegionPresets.containsKey(lowerName)) {
-      return builtinAreaRegionPresets[lowerName];
-    }
-
-    final iconPath = map.iconPath;
-    final iconMatch = RegExp(
-      r'assets[\\/]+icons[\\/]+(.+?)_icon\.svg$',
-      caseSensitive: false,
-    ).firstMatch(iconPath);
-    if (iconMatch != null && iconMatch.groupCount >= 1) {
-      final key = iconMatch.group(1)?.toLowerCase();
-      if (key != null && builtinAreaRegionPresets.containsKey(key)) {
-        return builtinAreaRegionPresets[key];
-      }
-    }
-
-    final normalized = lowerName.replaceAll(RegExp(r'[^a-z0-9]+'), '');
-    return builtinAreaRegionPresets[normalized];
-  }
-
-  Future<_BuiltinAreaUpsertSummary> _reimportBuiltinAreaDataForMap(
-    GameMap map, {
-    required bool overwriteExisting,
-  }) async {
-    final presetByFloor = _resolveBuiltinAreaRegionPresets(map);
-    if (presetByFloor == null || presetByFloor.isEmpty) {
-      return const _BuiltinAreaUpsertSummary(
-        addedAreas: 0,
-        updatedAreas: 0,
-        removedDuplicateAreas: 0,
-      );
-    }
-
-    await map.layers.load();
-    final layers = map.layers.toList();
-    if (layers.isEmpty) {
-      return const _BuiltinAreaUpsertSummary(
-        addedAreas: 0,
-        updatedAreas: 0,
-        removedDuplicateAreas: 0,
-      );
-    }
-
-    final layerByFloorKey = <String, MapLayer>{};
-    for (final layer in layers) {
-      final fileName = _extractFileName(layer.assetPath).toLowerCase();
-      layerByFloorKey[fileName] = layer;
-      layerByFloorKey[_stripFileExtension(fileName)] = layer;
-    }
-
-    final areaTags = await isar.tags
-        .filter()
-        .mapIdEqualTo(map.id)
-        .dimensionEqualTo(TagDimension.area)
-        .findAll();
-    final tagByName = <String, Tag>{for (final tag in areaTags) tag.name: tag};
-
-    final existingAreas =
-        await isar.mapAreas.filter().mapIdEqualTo(map.id).findAll();
-    final grouped = <String, List<MapArea>>{};
-    for (final area in existingAreas) {
-      final layerId = area.layerId;
-      if (layerId == null) continue;
-      final key = '${area.tagId}:$layerId';
-      grouped.putIfAbsent(key, () => []).add(area);
-    }
-
-    int addedAreas = 0;
-    int updatedAreas = 0;
-    final deleteIds = <int>{};
-    final toPut = <MapArea>[];
-
-    void upsertPresetToLayer(
-      BuiltinAreaPreset preset,
-      MapLayer layer, {
-      required String strokesJson,
-    }) {
-      final tag = tagByName[preset.name];
-      if (tag == null) return;
-
-      final key = '${tag.id}:${layer.id}';
-      final currentList = grouped[key] ?? const <MapArea>[];
-
-      MapArea? newest;
-      if (currentList.isNotEmpty) {
-        newest = currentList.reduce((a, b) => _isAreaNewer(a, b) ? a : b);
-        for (final area in currentList) {
-          if (area.id != newest.id) {
-            deleteIds.add(area.id);
-          }
-        }
-      }
-
-      if (newest == null) {
-        toPut.add(MapArea(
-          name: preset.name,
-          colorValue: preset.colorValue,
-          strokes: strokesJson,
-          mapId: map.id,
-          layerId: layer.id,
-          tagId: tag.id,
-          createdAt: DateTime.now(),
-          updated: DateTime.now(),
-        ));
-        addedAreas++;
-        return;
-      }
-
-      if (!overwriteExisting) return;
-
-      final changed = newest.name != preset.name ||
-          newest.colorValue != preset.colorValue ||
-          newest.strokes != strokesJson ||
-          newest.layerId != layer.id ||
-          newest.tagId != tag.id;
-
-      if (changed) {
-        newest.name = preset.name;
-        newest.colorValue = preset.colorValue;
-        newest.strokes = strokesJson;
-        newest.layerId = layer.id;
-        newest.tagId = tag.id;
-        newest.updatedAt = DateTime.now();
-        toPut.add(newest);
-        updatedAreas++;
-      }
-    }
-
-    for (final entry in presetByFloor.entries) {
-      final floorKey = entry.key.toLowerCase();
-      if (floorKey == '_merged') {
-        for (final preset in entry.value) {
-          final floorStrokeMap =
-              _decodeFloorStrokesMap(preset.floorStrokesJson);
-          if (floorStrokeMap.isNotEmpty) {
-            for (final strokeEntry in floorStrokeMap.entries) {
-              final presetFloorKey = strokeEntry.key.toLowerCase();
-              final layer = layerByFloorKey[presetFloorKey] ??
-                  layerByFloorKey[_stripFileExtension(presetFloorKey)];
-              if (layer == null) continue;
-              upsertPresetToLayer(
-                preset,
-                layer,
-                strokesJson: strokeEntry.value,
-              );
-            }
-            continue;
-          }
-
-          final presetFloorKey = (preset.floorKey ?? '').toLowerCase();
-          final presetStrokes = preset.strokesJson;
-          if (presetFloorKey.isEmpty || presetStrokes == null) continue;
-          final layer = layerByFloorKey[presetFloorKey] ??
-              layerByFloorKey[_stripFileExtension(presetFloorKey)];
-          if (layer == null) continue;
-          upsertPresetToLayer(
-            preset,
-            layer,
-            strokesJson: presetStrokes,
-          );
-        }
-        continue;
-      }
-
-      final layer = layerByFloorKey[floorKey] ??
-          layerByFloorKey[_stripFileExtension(floorKey)];
-      if (layer == null) continue;
-
-      for (final preset in entry.value) {
-        final presetStrokes = preset.strokesJson;
-        if (presetStrokes == null) continue;
-        upsertPresetToLayer(
-          preset,
-          layer,
-          strokesJson: presetStrokes,
-        );
-      }
-    }
-
-    if (toPut.isNotEmpty || deleteIds.isNotEmpty) {
-      await isar.writeTxn(() async {
-        for (final area in toPut) {
-          await isar.mapAreas.put(area);
-        }
-        for (final id in deleteIds) {
-          await isar.mapAreas.delete(id);
-        }
-      });
-    }
-
-    return _BuiltinAreaUpsertSummary(
-      addedAreas: addedAreas,
-      updatedAreas: updatedAreas,
-      removedDuplicateAreas: deleteIds.length,
-    );
-  }
-
-  bool _isAreaNewer(MapArea a, MapArea b) {
-    if (a.updatedAt.isAfter(b.updatedAt)) return true;
-    if (a.updatedAt.isBefore(b.updatedAt)) return false;
-    if (a.createdAt.isAfter(b.createdAt)) return true;
-    if (a.createdAt.isBefore(b.createdAt)) return false;
-    return a.id > b.id;
-  }
-
-  String _extractFileName(String path) {
-    final normalized = path.replaceAll('\\', '/');
-    final parts = normalized.split('/');
-    return parts.isEmpty ? path : parts.last;
-  }
-
-  String _stripFileExtension(String fileName) {
-    final dot = fileName.lastIndexOf('.');
-    if (dot <= 0) return fileName;
-    return fileName.substring(0, dot);
-  }
-
-  Map<String, String> _decodeFloorStrokesMap(String? floorStrokesJson) {
-    if (floorStrokesJson == null || floorStrokesJson.trim().isEmpty) {
-      return const <String, String>{};
-    }
-
-    try {
-      final decoded = jsonDecode(floorStrokesJson);
-      if (decoded is! Map) return const <String, String>{};
-
-      final result = <String, String>{};
-      for (final entry in decoded.entries) {
-        final key = entry.key;
-        if (key is! String || key.trim().isEmpty) continue;
-        final value = entry.value;
-        if (value is String) {
-          result[key] = value;
-        } else {
-          result[key] = jsonEncode(value);
-        }
-      }
-      return result;
-    } catch (_) {
-      return const <String, String>{};
-    }
-  }
-
-  /// 获取地图的所有标签 (按维度分组)
   Future<Map<int, List<Tag>>> getTagsByDimension(int mapId) async {
-    final tags = await isar.tags
-        .filter()
-        .mapIdEqualTo(mapId)
-        .sortBySortOrder()
-        .findAll();
+    final tags = await getAllTags(mapId);
     final grouped = <int, List<Tag>>{};
     for (final tag in tags) {
       grouped.putIfAbsent(tag.dimension, () => []).add(tag);
@@ -999,23 +73,22 @@ class TagService {
     return grouped;
   }
 
-  /// 获取地图的所有标签
-  Future<List<Tag>> getAllTags(int mapId) async {
-    return await isar.tags
-        .filter()
-        .mapIdEqualTo(mapId)
-        .sortBySortOrder()
-        .findAll();
+  Future<List<Tag>> getAllTags(int mapId) {
+    return isar.tags.filter().mapIdEqualTo(mapId).sortBySortOrder().findAll();
   }
 
-  /// 创建标签
-  Future<Tag> createTag(int mapId, String name, int color,
-      {int dimension = TagDimension.custom}) async {
+  Future<Tag> createTag(
+    int mapId,
+    String name,
+    int color, {
+    int dimension = TagDimension.custom,
+  }) async {
     final maxOrder = await isar.tags
         .filter()
         .mapIdEqualTo(mapId)
         .sortBySortOrderDesc()
         .findFirst();
+    final now = DateTime.now();
     final tag = Tag(
       tagUuid: TagUuidService.newRandomUuid(),
       name: name,
@@ -1024,7 +97,7 @@ class TagService {
       isSystem: false,
       sortOrder: (maxOrder?.sortOrder ?? 0) + 1,
       mapId: mapId,
-      updated: DateTime.now(),
+      updated: now,
     );
     await isar.writeTxn(() async {
       tag.updatedAt = DateTime.now();
@@ -1033,7 +106,6 @@ class TagService {
     return tag;
   }
 
-  /// 更新标签
   Future<void> updateTag(Tag tag) async {
     final original = await isar.tags.get(tag.id);
     String? deletedSystemUuidToMark;
@@ -1041,6 +113,7 @@ class TagService {
     if (original != null && original.isSystem) {
       final renamed = original.name.trim() != tag.name.trim();
       final dimensionChanged = original.dimension != tag.dimension;
+      // 系统标签一旦改名或换维度则转为自定义标签，并记录原系统 UUID 防复活。
       if (renamed || dimensionChanged) {
         deletedSystemUuidToMark = original.tagUuid;
         tag.isSystem = false;
@@ -1079,102 +152,17 @@ class TagService {
     });
 
     if (deletedSystemUuidToMark != null) {
-      await _markDeletedSystemTagUuid(tag.mapId, deletedSystemUuidToMark);
+      await _systemEnsurer.markDeletedSystemTagUuid(
+        tag.mapId,
+        deletedSystemUuidToMark,
+      );
     }
   }
 
-  /// 为历史标签补齐 UUID
-  Future<TagUuidMigrationSummary> ensureTagUuids() async {
-    final tags = await isar.tags.where().findAll();
-    if (tags.isEmpty) {
-      return const TagUuidMigrationSummary(migratedCount: 0);
-    }
-
-    final mapIds = tags.map((e) => e.mapId).toSet();
-    final mapById = <int, GameMap>{};
-    for (final mapId in mapIds) {
-      final map = await isar.gameMaps.get(mapId);
-      if (map != null) {
-        mapById[mapId] = map;
-      }
-    }
-
-    final ordered = tags.toList()
-      ..sort((a, b) {
-        if (a.isSystem != b.isSystem) {
-          return a.isSystem ? -1 : 1;
-        }
-        return a.id.compareTo(b.id);
-      });
-
-    final occupied = <String>{};
-    final toFix = <Tag>[];
-    final details = <TagUuidMigrationDetail>[];
-    for (final tag in ordered) {
-      final current = tag.tagUuid.trim();
-      String candidate = current;
-      String? reason;
-
-      if (tag.isSystem) {
-        final needsSystemUuid = current.isEmpty || occupied.contains(current);
-        if (needsSystemUuid) {
-          final map = mapById[tag.mapId];
-          if (map != null) {
-            candidate = TagUuidService.buildSystemTagUuid(
-              mapName: map.name,
-              mapIconPath: map.iconPath,
-              dimension: tag.dimension,
-              tagName: tag.name,
-            );
-            reason = current.isEmpty ? '系统标签UUID为空' : '系统标签UUID冲突';
-          }
-        }
-      }
-
-      if (candidate.isEmpty || occupied.contains(candidate)) {
-        final previous = candidate;
-        do {
-          candidate = TagUuidService.newRandomUuid();
-        } while (occupied.contains(candidate));
-        reason = previous.isEmpty ? 'UUID为空' : 'UUID冲突';
-      }
-
-      occupied.add(candidate);
-      if (candidate != current) {
-        tag.tagUuid = candidate;
-        tag.updatedAt = DateTime.now();
-        toFix.add(tag);
-        final map = mapById[tag.mapId];
-        details.add(
-          TagUuidMigrationDetail(
-            tagId: tag.id,
-            mapId: tag.mapId,
-            mapName: map?.name ?? 'unknown',
-            tagName: tag.name,
-            dimension: tag.dimension,
-            isSystem: tag.isSystem,
-            oldUuid: current,
-            newUuid: candidate,
-            reason: reason ?? (current.isEmpty ? 'UUID为空' : 'UUID冲突'),
-          ),
-        );
-      }
-    }
-
-    if (toFix.isEmpty) {
-      return const TagUuidMigrationSummary(migratedCount: 0);
-    }
-    await isar.writeTxn(() async {
-      await isar.tags.putAll(toFix);
-    });
-    return TagUuidMigrationSummary(
-      migratedCount: toFix.length,
-      details: details,
-    );
+  Future<TagUuidMigrationSummary> ensureTagUuids() {
+    return _systemEnsurer.ensureTagUuids();
   }
 
-  /// 删除标签
-  /// [deleteRelatedAreas] 为 true 时同时删除绑定到该标签的区域几何数据。
   Future<void> deleteTag(int tagId, {bool deleteRelatedAreas = false}) async {
     final tag = await isar.tags.get(tagId);
     final tombstones = <LanSyncEntityTombstoneEntry>[];
@@ -1182,13 +170,14 @@ class TagService {
       final map = await isar.gameMaps.get(tag.mapId);
       final mapName = map?.name.trim() ?? '';
       final tagUuid = tag.tagUuid.trim();
+      final deletedAt = DateTime.now().millisecondsSinceEpoch;
       if (mapName.isNotEmpty && tagUuid.isNotEmpty) {
         tombstones.add(
           LanSyncEntityTombstoneEntry(
             entityType: LanSyncEntityTombstoneType.tag,
             entityKey: tagUuid,
             mapName: mapName,
-            deletedAt: DateTime.now().millisecondsSinceEpoch,
+            deletedAt: deletedAt,
             payload: {
               'tagUuid': tagUuid,
               'tagName': tag.name,
@@ -1215,7 +204,7 @@ class TagService {
               entityType: LanSyncEntityTombstoneType.area,
               entityKey: '$tagUuid|${layerName.trim().toLowerCase()}',
               mapName: mapName,
-              deletedAt: DateTime.now().millisecondsSinceEpoch,
+              deletedAt: deletedAt,
               payload: {
                 'tagUuid': tagUuid,
                 'tagName': tag.name,
@@ -1226,6 +215,7 @@ class TagService {
         }
       }
     }
+
     await isar.writeTxn(() async {
       await isar.grenadeTags.filter().tagIdEqualTo(tagId).deleteAll();
       if (deleteRelatedAreas) {
@@ -1238,11 +228,10 @@ class TagService {
       await LanSyncLocalStore().upsertEntityTombstones(tombstones);
     }
     if (tag != null && tag.isSystem) {
-      await _markDeletedSystemTagUuid(tag.mapId, tag.tagUuid);
+      await _systemEnsurer.markDeletedSystemTagUuid(tag.mapId, tag.tagUuid);
     }
   }
 
-  /// 为道具添加标签
   Future<void> addTagToGrenade(int grenadeId, int tagId) async {
     final exists = await isar.grenadeTags
         .filter()
@@ -1258,7 +247,6 @@ class TagService {
     await _touchGrenadeForTagRelationChange(grenadeId);
   }
 
-  /// 移除道具标签
   Future<void> removeTagFromGrenade(int grenadeId, int tagId) async {
     var changed = false;
     await isar.writeTxn(() async {
@@ -1275,42 +263,38 @@ class TagService {
     }
   }
 
-  /// 获取道具的所有标签ID
   Future<Set<int>> getGrenadeTagIds(int grenadeId) async {
     final grenadeTags =
         await isar.grenadeTags.filter().grenadeIdEqualTo(grenadeId).findAll();
     return grenadeTags.map((gt) => gt.tagId).toSet();
   }
 
-  /// 获取道具的所有标签
   Future<List<Tag>> getGrenadeTags(int grenadeId) async {
     final tagIds = await getGrenadeTagIds(grenadeId);
     if (tagIds.isEmpty) return [];
-    final tags = <Tag>[];
-    for (final id in tagIds) {
-      final tag = await isar.tags.get(id);
-      if (tag != null) tags.add(tag);
-    }
-    return tags;
+    final tags = await isar.tags.getAll(tagIds.toList(growable: false));
+    return tags.whereType<Tag>().toList();
   }
 
-  /// 按标签筛选道具 (并集筛选 - 道具只需包含任一选中标签)
+  /// 按选中标签并集筛选道具。
   Future<List<Grenade>> filterByTags(
-      List<Grenade> grenades, Set<int> selectedTagIds) async {
+    List<Grenade> grenades,
+    Set<int> selectedTagIds,
+  ) async {
     if (selectedTagIds.isEmpty) return grenades;
     final result = <Grenade>[];
     for (final grenade in grenades) {
       final grenadeTags = await getGrenadeTagIds(grenade.id);
-      if (selectedTagIds.any((t) => grenadeTags.contains(t))) {
+      if (selectedTagIds.any(grenadeTags.contains)) {
         result.add(grenade);
       }
     }
     return result;
   }
 
-  /// 获取战术包 (相同标签组合的道具集合)
   Future<Map<String, List<Grenade>>> getTacticalPackages(
-      List<Grenade> grenades) async {
+    List<Grenade> grenades,
+  ) async {
     final packages = <String, List<Grenade>>{};
     for (final grenade in grenades) {
       final tagIds = await getGrenadeTagIds(grenade.id);
@@ -1321,7 +305,6 @@ class TagService {
     return packages;
   }
 
-  /// 批量设置道具标签
   Future<void> setGrenadeTags(int grenadeId, Set<int> tagIds) async {
     final existingLinks =
         await isar.grenadeTags.filter().grenadeIdEqualTo(grenadeId).findAll();
@@ -1339,44 +322,4 @@ class TagService {
     });
     await _touchGrenadeForTagRelationChange(grenadeId);
   }
-}
-
-class _BuiltinAreaUpsertSummary {
-  final int addedAreas;
-  final int updatedAreas;
-  final int removedDuplicateAreas;
-
-  const _BuiltinAreaUpsertSummary({
-    required this.addedAreas,
-    required this.updatedAreas,
-    required this.removedDuplicateAreas,
-  });
-}
-
-class _EnsureSystemTagForMapResult {
-  final int addedTags;
-  final int updatedTags;
-  final int removedObsoleteTags;
-  final int keptObsoleteTagsInUse;
-  final List<ObsoleteSystemTagUsageInfo> keptObsoleteTagDetails;
-
-  const _EnsureSystemTagForMapResult({
-    required this.addedTags,
-    required this.updatedTags,
-    required this.removedObsoleteTags,
-    required this.keptObsoleteTagsInUse,
-    this.keptObsoleteTagDetails = const <ObsoleteSystemTagUsageInfo>[],
-  });
-}
-
-class _SystemTagDef {
-  final int dimension;
-  final String name;
-  final int colorValue;
-
-  const _SystemTagDef({
-    required this.dimension,
-    required this.name,
-    required this.colorValue,
-  });
 }

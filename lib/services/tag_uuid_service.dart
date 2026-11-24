@@ -1,12 +1,9 @@
 import 'package:uuid/uuid.dart';
 
-/// 标签 UUID 规则：
-/// - 系统标签：确定性 UUID（跨设备一致）
-/// - 非系统标签：随机 UUID
 class TagUuidService {
   static const Uuid _uuid = Uuid();
 
-  // 固定命名空间，保证同一输入生成同一 UUID。
+  // 固定命名空间，确保跨设备为系统标签生成一致的 UUID v5。
   static const String _systemTagNamespace =
       '4f5b6f2c-2d6d-4cb0-8f4a-8b7a76f5a5b1';
 

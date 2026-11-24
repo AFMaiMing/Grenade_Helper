@@ -27,22 +27,18 @@ class FavoriteFolderService {
 
   const FavoriteFolderService(this.isar);
 
-  String normalizeFolderName(String value) {
-    return value.trim().toLowerCase();
-  }
+  String normalizeFolderName(String value) => value.trim().toLowerCase();
 
-  bool isDefaultFolder(FavoriteFolder folder) {
-    return normalizeFolderName(folder.name) ==
-        normalizeFolderName(defaultFolderName);
-  }
+  bool isDefaultFolder(FavoriteFolder folder) =>
+      normalizeFolderName(folder.name) ==
+      normalizeFolderName(defaultFolderName);
 
   Future<List<FavoriteFolder>> getFoldersByMap(int mapId) async {
     final folders =
         await isar.favoriteFolders.filter().mapIdEqualTo(mapId).findAll();
     folders.sort((a, b) {
       final byOrder = a.sortOrder.compareTo(b.sortOrder);
-      if (byOrder != 0) return byOrder;
-      return a.createdAt.compareTo(b.createdAt);
+      return byOrder != 0 ? byOrder : a.createdAt.compareTo(b.createdAt);
     });
     return folders;
   }
@@ -56,7 +52,7 @@ class FavoriteFolderService {
     return null;
   }
 
-  Future<FavoriteFolder?> getFolderById(int folderId) async {
+  Future<FavoriteFolder?> getFolderById(int folderId) {
     return isar.favoriteFolders.get(folderId);
   }
 
@@ -67,25 +63,39 @@ class FavoriteFolderService {
     return createFolder(mapId, defaultFolderName);
   }
 
-  Future<FavoriteFolder> createFolder(int mapId, String name) async {
-    final displayName = name.trim();
+  ({String displayName, String nameKey}) _validateFolderName(String rawName) {
+    final displayName = rawName.trim();
     if (displayName.isEmpty) {
       throw StateError('收藏夹名称不能为空');
     }
+    return (
+      displayName: displayName,
+      nameKey: normalizeFolderName(displayName),
+    );
+  }
 
-    final nameKey = normalizeFolderName(displayName);
+  Future<void> _ensureUniqueNameKey(
+    int mapId,
+    String nameKey, {
+    int? excludeFolderId,
+  }) async {
     final duplicated = await _findByNameKey(mapId, nameKey);
-    if (duplicated != null) {
+    if (duplicated != null && duplicated.id != excludeFolderId) {
       throw StateError('收藏夹名称已存在');
     }
+  }
+
+  Future<FavoriteFolder> createFolder(int mapId, String name) async {
+    final parsed = _validateFolderName(name);
+    await _ensureUniqueNameKey(mapId, parsed.nameKey);
 
     final existing = await getFoldersByMap(mapId);
     final sortOrder = existing.isEmpty ? 0 : existing.last.sortOrder + 1;
     final now = DateTime.now();
     final folder = FavoriteFolder(
       mapId: mapId,
-      name: displayName,
-      nameKey: nameKey,
+      name: parsed.displayName,
+      nameKey: parsed.nameKey,
       sortOrder: sortOrder,
       created: now,
       updated: now,
@@ -101,21 +111,16 @@ class FavoriteFolderService {
     final folder = await isar.favoriteFolders.get(folderId);
     if (folder == null) return;
 
-    final displayName = newName.trim();
-    if (displayName.isEmpty) {
-      throw StateError('收藏夹名称不能为空');
-    }
+    final parsed = _validateFolderName(newName);
+    if (parsed.nameKey == folder.nameKey) return;
+    await _ensureUniqueNameKey(
+      folder.mapId,
+      parsed.nameKey,
+      excludeFolderId: folder.id,
+    );
 
-    final newKey = normalizeFolderName(displayName);
-    if (newKey == folder.nameKey) return;
-
-    final duplicated = await _findByNameKey(folder.mapId, newKey);
-    if (duplicated != null && duplicated.id != folder.id) {
-      throw StateError('收藏夹名称已存在');
-    }
-
-    folder.name = displayName;
-    folder.nameKey = newKey;
+    folder.name = parsed.displayName;
+    folder.nameKey = parsed.nameKey;
     folder.updatedAt = DateTime.now();
 
     await isar.writeTxn(() async {
@@ -123,7 +128,7 @@ class FavoriteFolderService {
     });
   }
 
-  Future<List<Grenade>> _getFavoriteGrenadesInFolder(int folderId) async {
+  Future<List<Grenade>> _getFavoriteGrenadesInFolder(int folderId) {
     return isar.grenades
         .filter()
         .isFavoriteEqualTo(true)
@@ -145,7 +150,7 @@ class FavoriteFolderService {
     return map.id;
   }
 
-  Future<List<Grenade>> getMapFavoriteGrenades(int mapId) async {
+  Future<List<Grenade>> getMapFavoriteGrenades(int mapId) {
     return isar.grenades
         .filter()
         .isFavoriteEqualTo(true)
@@ -169,8 +174,12 @@ class FavoriteFolderService {
     }
 
     return folders
-        .map((f) =>
-            FolderWithGrenades(folder: f, grenades: grouped[f.id] ?? const []))
+        .map(
+          (f) => FolderWithGrenades(
+            folder: f,
+            grenades: grouped[f.id] ?? const [],
+          ),
+        )
         .toList();
   }
 
@@ -199,16 +208,12 @@ class FavoriteFolderService {
             .filter()
             .mapIdEqualTo(mapId)
             .watchLazy(fireImmediately: true)
-            .listen((_) {
-          emit();
-        });
+            .listen((_) => emit());
         grenadeSub = isar.grenades
             .filter()
             .layer((q) => q.map((m) => m.idEqualTo(mapId)))
             .watchLazy(fireImmediately: true)
-            .listen((_) {
-          emit();
-        });
+            .listen((_) => emit());
       },
       onCancel: () async {
         await folderSub?.cancel();
@@ -219,42 +224,69 @@ class FavoriteFolderService {
     return controller.stream;
   }
 
-  Future<void> setFavorite(int grenadeId,
-      {required bool favorite, int? folderId}) async {
+  Future<FavoriteFolder> _requireFolderForMap({
+    required int targetFolderId,
+    required int mapId,
+    required String mismatchMessage,
+  }) async {
+    final target = await isar.favoriteFolders.get(targetFolderId);
+    if (target == null) {
+      throw StateError('目标收藏夹不存在');
+    }
+    if (target.mapId != mapId) {
+      throw StateError(mismatchMessage);
+    }
+    return target;
+  }
+
+  Future<void> _updateGrenadesFavoriteInTxn(
+    Iterable<Grenade> grenades, {
+    required bool favorite,
+    required int? folderId,
+  }) async {
+    final now = DateTime.now();
+    for (final grenade in grenades) {
+      grenade.isFavorite = favorite;
+      grenade.favoriteFolderId = folderId;
+      grenade.updatedAt = now;
+      await isar.grenades.put(grenade);
+    }
+  }
+
+  Future<void> setFavorite(
+    int grenadeId, {
+    required bool favorite,
+    int? folderId,
+  }) async {
     final grenade = await isar.grenades.get(grenadeId);
     if (grenade == null) return;
 
     if (!favorite) {
       await isar.writeTxn(() async {
-        grenade.isFavorite = false;
-        grenade.favoriteFolderId = null;
-        grenade.updatedAt = DateTime.now();
-        await isar.grenades.put(grenade);
+        await _updateGrenadesFavoriteInTxn(
+          [grenade],
+          favorite: false,
+          folderId: null,
+        );
       });
       return;
     }
 
     final mapId = await _resolveGrenadeMapId(grenade);
-    FavoriteFolder folder;
-
-    if (folderId != null) {
-      final target = await isar.favoriteFolders.get(folderId);
-      if (target == null) {
-        throw StateError('目标收藏夹不存在');
-      }
-      if (target.mapId != mapId) {
-        throw StateError('不能跨地图收藏到其他收藏夹');
-      }
-      folder = target;
-    } else {
-      folder = await getOrCreateDefaultFolder(mapId);
-    }
+    final folder = folderId != null
+        ? await _requireFolderForMap(
+            targetFolderId: folderId,
+            mapId: mapId,
+            mismatchMessage: '不能跨地图收藏到其他收藏夹',
+          )
+        : await getOrCreateDefaultFolder(mapId);
 
     await isar.writeTxn(() async {
-      grenade.isFavorite = true;
-      grenade.favoriteFolderId = folder.id;
-      grenade.updatedAt = DateTime.now();
-      await isar.grenades.put(grenade);
+      await _updateGrenadesFavoriteInTxn(
+        [grenade],
+        favorite: true,
+        folderId: folder.id,
+      );
     });
   }
 
@@ -273,10 +305,11 @@ class FavoriteFolderService {
     }
 
     await isar.writeTxn(() async {
-      grenade.isFavorite = true;
-      grenade.favoriteFolderId = targetFolder.id;
-      grenade.updatedAt = DateTime.now();
-      await isar.grenades.put(grenade);
+      await _updateGrenadesFavoriteInTxn(
+        [grenade],
+        favorite: true,
+        folderId: targetFolder.id,
+      );
     });
   }
 
@@ -324,19 +357,17 @@ class FavoriteFolderService {
     await isar.writeTxn(() async {
       if (folderGrenades.isNotEmpty) {
         if (strategy == FavoriteFolderDeleteStrategy.unfavorite) {
-          for (final grenade in folderGrenades) {
-            grenade.isFavorite = false;
-            grenade.favoriteFolderId = null;
-            grenade.updatedAt = DateTime.now();
-            await isar.grenades.put(grenade);
-          }
+          await _updateGrenadesFavoriteInTxn(
+            folderGrenades,
+            favorite: false,
+            folderId: null,
+          );
         } else if (moveTarget != null) {
-          for (final grenade in folderGrenades) {
-            grenade.isFavorite = true;
-            grenade.favoriteFolderId = moveTarget.id;
-            grenade.updatedAt = DateTime.now();
-            await isar.grenades.put(grenade);
-          }
+          await _updateGrenadesFavoriteInTxn(
+            folderGrenades,
+            favorite: true,
+            folderId: moveTarget.id,
+          );
         }
       }
       await isar.favoriteFolders.delete(folder.id);

@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:math' as math;
+
 import 'package:isar_community/isar.dart';
+
 import '../models.dart';
 import '../models/map_area.dart';
 import '../models/tag.dart';
@@ -26,22 +28,24 @@ class DefaultAreaExportService {
         .sortBySortOrder()
         .findAll();
 
+    final mapKey = _resolveMapKey(map);
     if (areaTags.isEmpty) {
-      return _buildEmptyTemplate(_resolveMapKey(map));
+      return _buildEmptyTemplate(mapKey);
     }
 
     final tagById = {for (final tag in areaTags) tag.id: tag};
-
     final allAreas =
         await isar.mapAreas.filter().mapIdEqualTo(map.id).findAll();
     final deduped = <String, MapArea>{};
 
     for (final area in allAreas) {
       final layerId = area.layerId;
-      if (!tagById.containsKey(area.tagId)) continue;
-      if (layerId == null) continue;
-      if (!layerById.containsKey(layerId)) continue;
-      if (!_hasValidStrokes(area.strokes)) continue;
+      if (!tagById.containsKey(area.tagId) ||
+          layerId == null ||
+          !layerById.containsKey(layerId) ||
+          !_hasValidStrokes(area.strokes)) {
+        continue;
+      }
 
       final key = '${area.tagId}_$layerId';
       final previous = deduped[key];
@@ -54,15 +58,13 @@ class DefaultAreaExportService {
     }
 
     if (deduped.isEmpty) {
-      return _buildEmptyTemplate(_resolveMapKey(map));
+      return _buildEmptyTemplate(mapKey);
     }
 
     final areasByLayer = <int, List<MapArea>>{};
     for (final area in deduped.values) {
-      final layerId = area.layerId!;
-      areasByLayer.putIfAbsent(layerId, () => []).add(area);
+      areasByLayer.putIfAbsent(area.layerId!, () => []).add(area);
     }
-
     for (final entry in areasByLayer.entries) {
       entry.value.sort((a, b) {
         final t1 = tagById[a.tagId]?.sortOrder ?? 0;
@@ -71,28 +73,6 @@ class DefaultAreaExportService {
         return a.name.compareTo(b.name);
       });
     }
-
-    final mapKey = _resolveMapKey(map);
-    final sb = StringBuffer();
-    sb.writeln('class BuiltinAreaPreset {');
-    sb.writeln('  final String name;');
-    sb.writeln('  final int colorValue;');
-    sb.writeln('  final String? floorKey;');
-    sb.writeln('  final String? strokesJson;');
-    sb.writeln('  final String? floorStrokesJson;');
-    sb.writeln();
-    sb.writeln('  const BuiltinAreaPreset({');
-    sb.writeln('    required this.name,');
-    sb.writeln('    required this.colorValue,');
-    sb.writeln('    this.floorKey,');
-    sb.writeln('    this.strokesJson,');
-    sb.writeln('    this.floorStrokesJson,');
-    sb.writeln('  });');
-    sb.writeln('}');
-    sb.writeln();
-    sb.writeln(
-        'const Map<String, Map<String, List<BuiltinAreaPreset>>> builtinAreaRegionPresets = {');
-    sb.writeln("  '$mapKey': {");
 
     final mergedByTagKey = <String, _MergedTagExport>{};
     for (final layer in layers) {
@@ -105,15 +85,14 @@ class DefaultAreaExportService {
         final tagKey = tag.name.trim().toLowerCase();
         final merged = mergedByTagKey.putIfAbsent(
           tagKey,
-          () => _MergedTagExport(
-            name: tag.name,
-            colorValue: tag.colorValue,
-          ),
+          () => _MergedTagExport(name: tag.name, colorValue: tag.colorValue),
         );
         merged.bundles.add(_LayerAreaBundle(floorKey: floorKey, area: area));
       }
     }
 
+    final sb = StringBuffer();
+    _writePresetTemplateHeader(sb, mapKey);
     if (mergedByTagKey.isEmpty) {
       sb.writeln('    // 当前地图暂无可导出的默认区域数据');
     } else {
@@ -127,7 +106,6 @@ class DefaultAreaExportService {
 
         final bundles = merged.bundles;
         sb.writeln('      BuiltinAreaPreset(');
-
         sb.writeln("        name: '${_escapeDartString(merged.name)}',");
         sb.writeln('        colorValue: ${_toHexColor(merged.colorValue)},');
 
@@ -160,30 +138,35 @@ class DefaultAreaExportService {
     return sb.toString();
   }
 
+  void _writePresetTemplateHeader(StringBuffer sb, String mapKey) {
+    sb.writeln('class BuiltinAreaPreset {');
+    sb.writeln('  final String name;');
+    sb.writeln('  final int colorValue;');
+    sb.writeln('  final String? floorKey;');
+    sb.writeln('  final String? strokesJson;');
+    sb.writeln('  final String? floorStrokesJson;');
+    sb.writeln();
+    sb.writeln('  const BuiltinAreaPreset({');
+    sb.writeln('    required this.name,');
+    sb.writeln('    required this.colorValue,');
+    sb.writeln('    this.floorKey,');
+    sb.writeln('    this.strokesJson,');
+    sb.writeln('    this.floorStrokesJson,');
+    sb.writeln('  });');
+    sb.writeln('}');
+    sb.writeln();
+    sb.writeln(
+        'const Map<String, Map<String, List<BuiltinAreaPreset>>> builtinAreaRegionPresets = {');
+    sb.writeln("  '$mapKey': {");
+  }
+
   String _buildEmptyTemplate(String mapKey) {
-    return '''
-class BuiltinAreaPreset {
-  final String name;
-  final int colorValue;
-  final String? floorKey;
-  final String? strokesJson;
-  final String? floorStrokesJson;
-
-  const BuiltinAreaPreset({
-    required this.name,
-    required this.colorValue,
-    this.floorKey,
-    this.strokesJson,
-    this.floorStrokesJson,
-  });
-}
-
-const Map<String, Map<String, List<BuiltinAreaPreset>>> builtinAreaRegionPresets = {
-  '$mapKey': {
-    // 当前地图暂无可导出的默认区域数据
-  },
-};
-''';
+    final sb = StringBuffer();
+    _writePresetTemplateHeader(sb, mapKey);
+    sb.writeln('    // 当前地图暂无可导出的默认区域数据');
+    sb.writeln('  },');
+    sb.writeln('};');
+    return sb.toString();
   }
 
   bool _hasValidStrokes(String strokesJson) {
@@ -228,15 +211,9 @@ const Map<String, Map<String, List<BuiltinAreaPreset>>> builtinAreaRegionPresets
         if ((stroke.widthRatio - _defaultBrushRatio).abs() > 1e-4) {
           entry['w'] = (stroke.widthRatio * _quantizeScale).round();
         }
-        if (stroke.isEraser) {
-          entry['e'] = 1;
-        }
-        if (stroke.isShape) {
-          entry['s'] = 1;
-        }
-        if (stroke.isSquare) {
-          entry['b'] = 1;
-        }
+        if (stroke.isEraser) entry['e'] = 1;
+        if (stroke.isShape) entry['s'] = 1;
+        if (stroke.isSquare) entry['b'] = 1;
         compact.add(entry);
       }
 
@@ -256,22 +233,19 @@ const Map<String, Map<String, List<BuiltinAreaPreset>>> builtinAreaRegionPresets
       if (stroke is Map) {
         final points = _parseStrokePoints(stroke);
         if (points.isEmpty) continue;
-        final widthRatio = _parseWidthRatio(stroke);
-        final isEraser = _parseIsEraser(stroke);
-        final isShape = _parseIsShape(stroke);
         result.add(
           _ExportStroke(
             points: points,
-            widthRatio: widthRatio,
-            isEraser: isEraser,
-            isShape: isShape,
+            widthRatio: _parseWidthRatio(stroke),
+            isEraser: _parseBoolFlag(stroke['isEraser'] ?? stroke['e']),
+            isShape: _parseBoolFlag(stroke['isShape'] ?? stroke['s']),
             isSquare: parseSquareBrush(stroke),
           ),
         );
         continue;
       }
 
-      // 兼容旧格式：每条笔画直接是 points 数组
+      // 兼容旧格式：笔画条目直接存储点位数组。
       if (stroke is List) {
         final points = _parsePoints(stroke);
         if (points.isEmpty) continue;
@@ -309,15 +283,7 @@ const Map<String, Map<String, List<BuiltinAreaPreset>>> builtinAreaRegionPresets
     return value.clamp(_minBrushRatio, _maxBrushRatio);
   }
 
-  bool _parseIsEraser(Map stroke) {
-    final raw = stroke['isEraser'] ?? stroke['e'];
-    if (raw is bool) return raw;
-    if (raw is num) return raw != 0;
-    return false;
-  }
-
-  bool _parseIsShape(Map stroke) {
-    final raw = stroke['isShape'] ?? stroke['s'];
+  bool _parseBoolFlag(dynamic raw) {
     if (raw is bool) return raw;
     if (raw is num) return raw != 0;
     return false;
@@ -412,7 +378,6 @@ const Map<String, Map<String, List<BuiltinAreaPreset>>> builtinAreaRegionPresets
     var index = -1;
     var dmax = 0.0;
     final end = points.length - 1;
-
     for (var i = 1; i < end; i++) {
       final d = _perpendicularDistance(points[i], points[0], points[end]);
       if (d > dmax) {
@@ -441,10 +406,8 @@ const Map<String, Map<String, List<BuiltinAreaPreset>>> builtinAreaRegionPresets
     }
 
     final t = (((p.x - a.x) * dx + (p.y - a.y) * dy) / len2).clamp(0.0, 1.0);
-    final projX = a.x + dx * t;
-    final projY = a.y + dy * t;
-    final ddx = p.x - projX;
-    final ddy = p.y - projY;
+    final ddx = p.x - (a.x + dx * t);
+    final ddy = p.y - (a.y + dy * t);
     return math.sqrt(ddx * ddx + ddy * ddy);
   }
 
@@ -454,11 +417,10 @@ const Map<String, Map<String, List<BuiltinAreaPreset>>> builtinAreaRegionPresets
   }
 
   String _resolveMapKey(GameMap map) {
-    final iconPath = map.iconPath;
     final iconMatch = RegExp(
       r'assets[\\/]+icons[\\/]+(.+?)_icon\.svg$',
       caseSensitive: false,
-    ).firstMatch(iconPath);
+    ).firstMatch(map.iconPath);
 
     if (iconMatch != null && iconMatch.groupCount >= 1) {
       final key = iconMatch.group(1);
@@ -469,8 +431,7 @@ const Map<String, Map<String, List<BuiltinAreaPreset>>> builtinAreaRegionPresets
 
     final fallback =
         map.name.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '');
-    if (fallback.isNotEmpty) return fallback;
-    return 'map_${map.id}';
+    return fallback.isNotEmpty ? fallback : 'map_${map.id}';
   }
 
   String _extractFileName(String path) {

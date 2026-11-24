@@ -1,52 +1,19 @@
-import 'dart:convert';
-import 'dart:math' as math;
-import 'dart:ui';
 import 'package:isar_community/isar.dart';
+
+import '../models.dart';
+import '../models/grenade_tag.dart';
 import '../models/map_area.dart';
 import '../models/tag.dart';
-import '../models/grenade_tag.dart';
-import '../models.dart';
-import '../widgets/square_brush.dart';
+import 'area/area_geometry.dart';
+import 'area/area_models.dart';
 import 'lan_sync/lan_sync_local_store.dart';
 import 'tag_uuid_service.dart';
 
-class AutoTagSummary {
-  final int processedGrenades;
-  final int matchedGrenades;
-  final int addedLinks;
-  final int removedLinks;
-  final Map<String, int> areaMatches;
+export 'area/area_models.dart' show AutoTagSummary, AreaTagSyncSummary;
 
-  const AutoTagSummary({
-    required this.processedGrenades,
-    required this.matchedGrenades,
-    required this.addedLinks,
-    required this.removedLinks,
-    required this.areaMatches,
-  });
-}
-
-class AreaTagSyncSummary {
-  final int processedGrenades;
-  final int matchedGrenades;
-  final int addedLinks;
-  final int removedLinks;
-
-  const AreaTagSyncSummary({
-    required this.processedGrenades,
-    required this.matchedGrenades,
-    required this.addedLinks,
-    required this.removedLinks,
-  });
-}
-
-/// 区域服务
 class AreaService {
-  static const double _defaultBrushRatio = 0.018;
-  static const double _minBrushRatio = 0.004;
-  static const double _maxBrushRatio = 0.08;
-
   final Isar isar;
+
   AreaService(this.isar);
 
   Future<void> _touchGrenadesForTagRelationChanges(
@@ -69,12 +36,10 @@ class AreaService {
     });
   }
 
-  /// 获取地图的所有区域
-  Future<List<MapArea>> getAreas(int mapId) async {
+  Future<List<MapArea>> getAreas(int mapId) {
     return isar.mapAreas.filter().mapIdEqualTo(mapId).findAll();
   }
 
-  /// 创建区域并自动创建对应标签
   Future<MapArea> createArea({
     required String name,
     required int colorValue,
@@ -83,7 +48,8 @@ class AreaService {
     int? layerId,
     int? existingTagId,
   }) async {
-    int tagId;
+    final now = DateTime.now();
+    final int tagId;
     if (existingTagId != null) {
       tagId = existingTagId;
       await isar.writeTxn(() async {
@@ -92,14 +58,13 @@ class AreaService {
           if (tag.tagUuid.trim().isEmpty) {
             tag.tagUuid = TagUuidService.newRandomUuid();
           }
-          tag.updatedAt = DateTime.now();
+          tag.updatedAt = now;
           tag.name = name;
           tag.colorValue = colorValue;
           await isar.tags.put(tag);
         }
       });
     } else {
-      // 先创建对应的区域标签
       final tag = Tag(
         tagUuid: TagUuidService.newRandomUuid(),
         name: name,
@@ -115,7 +80,6 @@ class AreaService {
       tagId = tag.id;
     }
 
-    // 创建区域
     final area = MapArea(
       name: name,
       colorValue: colorValue,
@@ -123,29 +87,27 @@ class AreaService {
       mapId: mapId,
       layerId: layerId,
       tagId: tagId,
-      createdAt: DateTime.now(),
-      updated: DateTime.now(),
+      createdAt: now,
+      updated: now,
     );
     await isar.writeTxn(() async {
       await isar.mapAreas.put(area);
     });
-
     return area;
   }
 
-  /// 删除区域
-  /// [deleteTag] 为 true 时会同时删除区域标签与关联关系。
-  /// 传 false 时仅删除区域几何数据。
+  /// 删除区域；[deleteTag] 为 true 时连带删除对应区域标签与关联。
   Future<void> deleteArea(MapArea area, {bool deleteTag = true}) async {
     final tag = await isar.tags.get(area.tagId);
     final map = await isar.gameMaps.get(area.mapId);
-    String layerName = 'Default';
+    var layerName = 'Default';
     if (area.layerId != null) {
       final layer = await isar.mapLayers.get(area.layerId!);
       if (layer != null && layer.name.trim().isNotEmpty) {
         layerName = layer.name;
       }
     }
+
     final tombstones = <LanSyncEntityTombstoneEntry>[];
     final tagUuid = tag?.tagUuid.trim() ?? '';
     final mapName = map?.name.trim() ?? '';
@@ -182,9 +144,9 @@ class AreaService {
         );
       }
     }
+
     await isar.writeTxn(() async {
       if (deleteTag) {
-        // 删除标签关联
         await isar.grenadeTags.filter().tagIdEqualTo(area.tagId).deleteAll();
         await isar.tags.delete(area.tagId);
       }
@@ -196,7 +158,6 @@ class AreaService {
     }
   }
 
-  /// 更新区域及其标签
   Future<void> updateArea({
     required MapArea area,
     required String name,
@@ -204,18 +165,17 @@ class AreaService {
     required String strokes,
     int? layerId,
   }) async {
+    final now = DateTime.now();
     await isar.writeTxn(() async {
-      // 1. 更新对应标签
       final tag = await isar.tags.get(area.tagId);
       if (tag != null) {
-        tag.updatedAt = DateTime.now();
+        tag.updatedAt = now;
         tag.name = name;
         tag.colorValue = colorValue;
         await isar.tags.put(tag);
       }
 
-      // 2. 更新区域
-      area.updatedAt = DateTime.now();
+      area.updatedAt = now;
       area.name = name;
       area.colorValue = colorValue;
       area.strokes = strokes;
@@ -224,29 +184,19 @@ class AreaService {
     });
   }
 
-  /// 判断点是否在区域内（基于涂画笔画与笔宽）
   bool isPointInArea(double x, double y, MapArea area) {
-    final strokes = _parseStrokes(area.strokes);
-    if (strokes.isEmpty) return false;
-
-    final point = Offset(x, y);
-    var isInside = false;
-
-    // 按笔画顺序应用：普通笔画命中=加入区域，橡皮擦命中=移出区域
-    for (final stroke in strokes) {
-      if (stroke.points.isEmpty) continue;
-      if (!_isPointOnStroke(point, stroke)) continue;
-      isInside = !stroke.isEraser;
-    }
-    return isInside;
+    return isPointInAreaJson(x, y, area.strokes);
   }
 
-  /// 获取点所在的所有区域
-  Future<List<MapArea>> getAreasForPoint(int mapId, double x, double y,
-      {int? layerId}) async {
+  Future<List<MapArea>> getAreasForPoint(
+    int mapId,
+    double x,
+    double y, {
+    int? layerId,
+  }) async {
     final areas = await getAreas(mapId);
     return areas.where((area) {
-      // 自动标签时必须严格匹配楼层，避免旧数据 layerId=null 导致跨层误标
+      // 指定楼层时严格按楼层过滤，防止旧数据 layerId 为 null 引起跨层误标。
       if (layerId != null && area.layerId != layerId) {
         return false;
       }
@@ -254,7 +204,6 @@ class AreaService {
     }).toList();
   }
 
-  /// 自动为道具添加区域标签
   Future<void> autoTagGrenade(
     Grenade grenade,
     int mapId, {
@@ -290,7 +239,6 @@ class AreaService {
       }
 
       for (final tagId in matchedAreaTagIds) {
-        // 检查是否已有该区域标签
         final existing = await isar.grenadeTags
             .filter()
             .grenadeIdEqualTo(grenade.id)
@@ -304,13 +252,12 @@ class AreaService {
         }
       }
     });
+
     if (changed) {
       await _touchGrenadesForTagRelationChanges([grenade.id]);
     }
   }
 
-  /// 批量为地图所有道具自动标签
-  /// [useImpactPoint] 为 true 时，按爆点坐标判定；否则按站位坐标判定。
   Future<AutoTagSummary> autoTagAllGrenades(
     int mapId, {
     bool useImpactPoint = false,
@@ -326,12 +273,11 @@ class AreaService {
         areaMatches: {},
       );
     }
-    await map.layers.load();
-    final layers = map.layers.toList();
 
+    await map.layers.load();
     final allGrenades = <Grenade>[];
     final grenadesByLayer = <int, List<Grenade>>{};
-    for (final layer in layers) {
+    for (final layer in map.layers) {
       final grenades = await isar.grenades
           .filter()
           .layer((q) => q.idEqualTo(layer.id))
@@ -364,17 +310,16 @@ class AreaService {
       final candidatesRaw = area.layerId == null
           ? allGrenades
           : (grenadesByLayer[area.layerId!] ?? const <Grenade>[]);
-      final candidates = useImpactPoint
-          ? candidatesRaw
-              .where((g) => g.impactXRatio != null && g.impactYRatio != null)
-              .toList()
-          : candidatesRaw;
-
+      final candidates = _filterByCoordinateMode(
+        candidatesRaw,
+        useImpactPoint: useImpactPoint,
+      );
+      final parsedStrokes = parseAreaStrokes(area.strokes);
       final matchedIds = <int>{};
       for (final grenade in candidates) {
         final x = useImpactPoint ? grenade.impactXRatio! : grenade.xRatio;
         final y = useImpactPoint ? grenade.impactYRatio! : grenade.yRatio;
-        if (isPointInArea(x, y, area)) {
+        if (isPointInParsedStrokes(x, y, parsedStrokes)) {
           matchedIds.add(grenade.id);
           matchedGrenadeIds.add(grenade.id);
         }
@@ -389,34 +334,15 @@ class AreaService {
     int addedLinks = 0;
     int removedLinks = 0;
     final changedGrenadeIds = <int>{};
-
     await isar.writeTxn(() async {
-      for (final area in areas) {
-        final newIds = areaToGrenadeIds[area.tagId] ?? const <int>{};
-        final existingLinks =
-            await isar.grenadeTags.filter().tagIdEqualTo(area.tagId).findAll();
-
-        final existingIds = <int>{};
-        final seen = <int>{};
-        for (final link in existingLinks) {
-          final isDuplicate = !seen.add(link.grenadeId);
-          if (isDuplicate || !newIds.contains(link.grenadeId)) {
-            await isar.grenadeTags.delete(link.id);
-            removedLinks++;
-            changedGrenadeIds.add(link.grenadeId);
-          } else {
-            existingIds.add(link.grenadeId);
-          }
-        }
-
-        for (final grenadeId in newIds) {
-          if (!existingIds.contains(grenadeId)) {
-            await isar.grenadeTags
-                .put(GrenadeTag(grenadeId: grenadeId, tagId: area.tagId));
-            addedLinks++;
-            changedGrenadeIds.add(grenadeId);
-          }
-        }
+      for (final entry in areaToGrenadeIds.entries) {
+        final counts = await _syncTagLinksInTxn(
+          tagId: entry.key,
+          targetGrenadeIds: entry.value,
+          changedGrenadeIds: changedGrenadeIds,
+        );
+        addedLinks += counts.added;
+        removedLinks += counts.removed;
       }
     });
     await _touchGrenadesForTagRelationChanges(changedGrenadeIds);
@@ -430,11 +356,11 @@ class AreaService {
     );
   }
 
-  /// 同步单个区域标签
-  /// [useImpactPoint] 为 true 时，按爆点坐标判定；否则按站位坐标判定。
-  Future<AreaTagSyncSummary> syncAreaTag(MapArea area,
-      {bool useImpactPoint = false}) async {
-    List<Grenade> grenades;
+  Future<AreaTagSyncSummary> syncAreaTag(
+    MapArea area, {
+    bool useImpactPoint = false,
+  }) async {
+    final List<Grenade> grenades;
     if (area.layerId != null) {
       grenades = await isar.grenades
           .filter()
@@ -453,68 +379,91 @@ class AreaService {
       await map.layers.load();
       grenades = [];
       for (final layer in map.layers) {
-        final layerGrenades = await isar.grenades
-            .filter()
-            .layer((q) => q.idEqualTo(layer.id))
-            .findAll();
-        grenades.addAll(layerGrenades);
+        grenades.addAll(
+          await isar.grenades
+              .filter()
+              .layer((q) => q.idEqualTo(layer.id))
+              .findAll(),
+        );
       }
     }
 
-    final candidates = useImpactPoint
-        ? grenades
-            .where((g) => g.impactXRatio != null && g.impactYRatio != null)
-            .toList()
-        : grenades;
-
+    final candidates = _filterByCoordinateMode(
+      grenades,
+      useImpactPoint: useImpactPoint,
+    );
+    final parsedStrokes = parseAreaStrokes(area.strokes);
     final matchedGrenadeIds = <int>{};
     for (final grenade in candidates) {
       final x = useImpactPoint ? grenade.impactXRatio! : grenade.xRatio;
       final y = useImpactPoint ? grenade.impactYRatio! : grenade.yRatio;
-      if (isPointInArea(x, y, area)) {
+      if (isPointInParsedStrokes(x, y, parsedStrokes)) {
         matchedGrenadeIds.add(grenade.id);
       }
     }
 
-    int addedLinks = 0;
-    int removedLinks = 0;
+    late ({int added, int removed}) counts;
     final changedGrenadeIds = <int>{};
-
     await isar.writeTxn(() async {
-      final existingLinks =
-          await isar.grenadeTags.filter().tagIdEqualTo(area.tagId).findAll();
-
-      final existingIds = <int>{};
-      final seen = <int>{};
-
-      for (final link in existingLinks) {
-        final isDuplicate = !seen.add(link.grenadeId);
-        if (isDuplicate || !matchedGrenadeIds.contains(link.grenadeId)) {
-          await isar.grenadeTags.delete(link.id);
-          removedLinks++;
-          changedGrenadeIds.add(link.grenadeId);
-        } else {
-          existingIds.add(link.grenadeId);
-        }
-      }
-
-      for (final grenadeId in matchedGrenadeIds) {
-        if (!existingIds.contains(grenadeId)) {
-          await isar.grenadeTags
-              .put(GrenadeTag(grenadeId: grenadeId, tagId: area.tagId));
-          addedLinks++;
-          changedGrenadeIds.add(grenadeId);
-        }
-      }
+      counts = await _syncTagLinksInTxn(
+        tagId: area.tagId,
+        targetGrenadeIds: matchedGrenadeIds,
+        changedGrenadeIds: changedGrenadeIds,
+      );
     });
     await _touchGrenadesForTagRelationChanges(changedGrenadeIds);
 
     return AreaTagSyncSummary(
       processedGrenades: candidates.length,
       matchedGrenades: matchedGrenadeIds.length,
-      addedLinks: addedLinks,
-      removedLinks: removedLinks,
+      addedLinks: counts.added,
+      removedLinks: counts.removed,
     );
+  }
+
+  List<Grenade> _filterByCoordinateMode(
+    List<Grenade> grenades, {
+    required bool useImpactPoint,
+  }) {
+    if (!useImpactPoint) return grenades;
+    return grenades
+        .where((g) => g.impactXRatio != null && g.impactYRatio != null)
+        .toList();
+  }
+
+  Future<({int added, int removed})> _syncTagLinksInTxn({
+    required int tagId,
+    required Set<int> targetGrenadeIds,
+    required Set<int> changedGrenadeIds,
+  }) async {
+    final existingLinks =
+        await isar.grenadeTags.filter().tagIdEqualTo(tagId).findAll();
+    final existingIds = <int>{};
+    final seen = <int>{};
+    int added = 0;
+    int removed = 0;
+
+    for (final link in existingLinks) {
+      final isDuplicate = !seen.add(link.grenadeId);
+      if (isDuplicate || !targetGrenadeIds.contains(link.grenadeId)) {
+        await isar.grenadeTags.delete(link.id);
+        removed++;
+        changedGrenadeIds.add(link.grenadeId);
+      } else {
+        existingIds.add(link.grenadeId);
+      }
+    }
+
+    for (final grenadeId in targetGrenadeIds) {
+      if (!existingIds.contains(grenadeId)) {
+        await isar.grenadeTags
+            .put(GrenadeTag(grenadeId: grenadeId, tagId: tagId));
+        added++;
+        changedGrenadeIds.add(grenadeId);
+      }
+    }
+
+    return (added: added, removed: removed);
   }
 
   Future<int?> _resolveGrenadeLayerId(Grenade grenade) async {
@@ -529,223 +478,4 @@ class AreaService {
     final areas = await getAreas(mapId);
     return areas.map((a) => a.tagId).toSet();
   }
-
-  /// 解析笔画JSON（仅保留涂画模式数据结构）
-  List<_AreaStroke> _parseStrokes(String json) {
-    try {
-      final data = jsonDecode(json) as List;
-      return data.map((stroke) {
-        if (stroke is Map) {
-          final pointsRaw = (stroke['q'] as List?) ??
-              (stroke['points'] as List?) ??
-              (stroke['p'] as List?) ??
-              const [];
-          final widthRatio = _normalizeWidthRatio(
-            ((stroke['widthRatio'] as num?) ?? (stroke['w'] as num?))
-                ?.toDouble(),
-          ).clamp(_minBrushRatio, _maxBrushRatio);
-          final isEraser = _parseIsEraser(stroke['isEraser'] ?? stroke['e']);
-          final isShape = _parseIsEraser(stroke['isShape'] ?? stroke['s']);
-          final points =
-              _parseStrokePoints(pointsRaw, isDeltaPacked: stroke['q'] != null);
-          return _AreaStroke(
-            points: points,
-            widthRatio: widthRatio,
-            isEraser: isEraser,
-            isShape: isShape,
-            isSquare: parseSquareBrush(stroke),
-          );
-        }
-
-        final points =
-            stroke is List ? _parseStrokePoints(stroke) : const <Offset>[];
-        return _AreaStroke(
-          points: points,
-          widthRatio: _defaultBrushRatio,
-          isEraser: false,
-          isShape: false,
-        );
-      }).toList();
-    } catch (e) {
-      return [];
-    }
-  }
-
-  double _normalizeWidthRatio(double? raw) {
-    if (raw == null) return _defaultBrushRatio;
-    var value = raw;
-    if (value > 1.0) {
-      value /= 1000.0;
-    }
-    return value;
-  }
-
-  bool _parseIsEraser(dynamic value) {
-    if (value is bool) return value;
-    if (value is num) return value != 0;
-    return false;
-  }
-
-  List<Offset> _parseStrokePoints(List raw, {bool isDeltaPacked = false}) {
-    if (raw.isEmpty) return const [];
-
-    if (raw.first is num) {
-      return _parseFlatNumericPoints(raw, isDeltaPacked: isDeltaPacked);
-    }
-
-    return raw
-        .map((p) {
-          if (p is Map && p['x'] is num && p['y'] is num) {
-            return Offset(
-              (p['x'] as num).toDouble(),
-              (p['y'] as num).toDouble(),
-            );
-          }
-          if (p is List && p.length >= 2 && p[0] is num && p[1] is num) {
-            return Offset(
-              (p[0] as num).toDouble(),
-              (p[1] as num).toDouble(),
-            );
-          }
-          return null;
-        })
-        .whereType<Offset>()
-        .toList();
-  }
-
-  List<Offset> _parseFlatNumericPoints(List raw,
-      {required bool isDeltaPacked}) {
-    if (raw.length < 2) return const [];
-    final points = <Offset>[];
-    double? x;
-    double? y;
-    for (int i = 0; i + 1 < raw.length; i += 2) {
-      final xRaw = raw[i];
-      final yRaw = raw[i + 1];
-      if (xRaw is! num || yRaw is! num) continue;
-
-      if (isDeltaPacked) {
-        final dx = xRaw.toDouble() / 1000.0;
-        final dy = yRaw.toDouble() / 1000.0;
-        if (x == null || y == null) {
-          x = dx;
-          y = dy;
-        } else {
-          x += dx;
-          y += dy;
-        }
-      } else {
-        x = xRaw.toDouble();
-        y = yRaw.toDouble();
-        if (x > 1.0 || y > 1.0) {
-          x /= 1000.0;
-          y /= 1000.0;
-        }
-      }
-
-      points.add(Offset(x, y));
-    }
-    return points;
-  }
-
-  bool _isPointOnStroke(Offset point, _AreaStroke stroke) {
-    final points = stroke.points;
-    if (stroke.isShape && points.length >= 3) {
-      return _isPointInPolygon(point, points);
-    }
-    final radius =
-        (stroke.widthRatio / 2).clamp(_minBrushRatio / 2, _maxBrushRatio / 2);
-    if (stroke.isSquare) {
-      if (points.length == 1) {
-        return _isPointInSquareSweep(point, points.first, points.first, radius);
-      }
-      for (int i = 0; i < points.length - 1; i++) {
-        if (_isPointInSquareSweep(point, points[i], points[i + 1], radius)) {
-          return true;
-        }
-      }
-      return false;
-    }
-    final radiusSquared = radius * radius;
-
-    if (points.length == 1) {
-      final dx = point.dx - points.first.dx;
-      final dy = point.dy - points.first.dy;
-      return dx * dx + dy * dy <= radiusSquared;
-    }
-
-    for (int i = 0; i < points.length - 1; i++) {
-      final d2 = _distanceSquaredToSegment(point, points[i], points[i + 1]);
-      if (d2 <= radiusSquared) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /// 点是否在轴对齐方块沿线段 a→b 扫过的区域内（切比雪夫距离 ≤ h）
-  bool _isPointInSquareSweep(Offset p, Offset a, Offset b, double h) {
-    var lo = 0.0;
-    var hi = 1.0;
-    for (final (r, d) in [(p.dx - a.dx, b.dx - a.dx), (p.dy - a.dy, b.dy - a.dy)]) {
-      if (d.abs() < 1e-12) {
-        if (r.abs() > h) return false;
-        continue;
-      }
-      final t1 = (r - h) / d;
-      final t2 = (r + h) / d;
-      lo = math.max(lo, math.min(t1, t2));
-      hi = math.min(hi, math.max(t1, t2));
-      if (lo > hi) return false;
-    }
-    return true;
-  }
-
-  bool _isPointInPolygon(Offset point, List<Offset> polygon) {
-    var inside = false;
-    for (int i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-      final xi = polygon[i].dx, yi = polygon[i].dy;
-      final xj = polygon[j].dx, yj = polygon[j].dy;
-      final intersect = ((yi > point.dy) != (yj > point.dy)) &&
-          (point.dx <
-              (xj - xi) * (point.dy - yi) / ((yj - yi) == 0 ? 1e-12 : (yj - yi)) +
-                  xi);
-      if (intersect) inside = !inside;
-    }
-    return inside;
-  }
-
-  double _distanceSquaredToSegment(Offset p, Offset a, Offset b) {
-    final ab = b - a;
-    final ap = p - a;
-    final abLen2 = ab.dx * ab.dx + ab.dy * ab.dy;
-
-    if (abLen2 <= 1e-12) {
-      final dx = p.dx - a.dx;
-      final dy = p.dy - a.dy;
-      return dx * dx + dy * dy;
-    }
-
-    final t = ((ap.dx * ab.dx + ap.dy * ab.dy) / abLen2).clamp(0.0, 1.0);
-    final closest = Offset(a.dx + ab.dx * t, a.dy + ab.dy * t);
-    final dx = p.dx - closest.dx;
-    final dy = p.dy - closest.dy;
-    return dx * dx + dy * dy;
-  }
-}
-
-class _AreaStroke {
-  final List<Offset> points;
-  final double widthRatio;
-  final bool isEraser;
-  final bool isShape;
-  final bool isSquare;
-
-  const _AreaStroke({
-    required this.points,
-    required this.widthRatio,
-    required this.isEraser,
-    this.isShape = false,
-    this.isSquare = false,
-  });
 }

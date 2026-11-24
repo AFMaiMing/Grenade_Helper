@@ -1,52 +1,43 @@
 import 'dart:io';
+
 import 'package:isar_community/isar.dart';
 import 'package:path/path.dart' as p;
 import 'package:uuid/uuid.dart';
+
 import '../models.dart';
 import 'media_handle_service.dart';
 import 'tag_service.dart';
 
-/// 迁移服务
 class MigrationService {
-  final Isar isar;
-  const MigrationService(this.isar);
   static const String _defaultFolderName = '默认收藏夹';
 
-  /// 生成UUID
+  final Isar isar;
+
+  const MigrationService(this.isar);
+
   Future<int> migrateGrenadeUuids() async {
-    // 查找空ID
     final allGrenades = await isar.grenades.where().findAll();
     final grenadesNeedingUuid = allGrenades
         .where((g) => g.uniqueId == null || g.uniqueId!.isEmpty)
         .toList();
-
     if (grenadesNeedingUuid.isEmpty) return 0;
 
     const uuid = Uuid();
     await isar.writeTxn(() async {
       for (final g in grenadesNeedingUuid) {
-        // 加载关联
         await g.layer.load();
         await g.steps.load();
-
-        // 生成
         g.uniqueId = uuid.v4();
-
-        // 保存
         await isar.grenades.put(g);
-
-        // 保存关联
         await g.layer.save();
         await g.steps.save();
       }
     });
-
     return grenadesNeedingUuid.length;
   }
 
-  Future<TagUuidMigrationSummary> migrateTagUuids() async {
-    final tagService = TagService(isar);
-    return tagService.ensureTagUuids();
+  Future<TagUuidMigrationSummary> migrateTagUuids() {
+    return TagService(isar).ensureTagUuids();
   }
 
   String _normalizeName(String value) => value.trim().toLowerCase();
@@ -135,7 +126,6 @@ class MigrationService {
     final grenadesToFix = <Grenade>[];
     for (final grenade in allGrenades) {
       var changed = false;
-
       if (!grenade.isFavorite) {
         if (grenade.favoriteFolderId != null) {
           grenade.favoriteFolderId = null;
@@ -146,9 +136,7 @@ class MigrationService {
         if (mapId != null) {
           final folderId = grenade.favoriteFolderId;
           final folder = folderId == null ? null : folderById[folderId];
-          final invalidFolder =
-              folderId == null || folder == null || folder.mapId != mapId;
-          if (invalidFolder) {
+          if (folderId == null || folder == null || folder.mapId != mapId) {
             grenade.favoriteFolderId = await ensureDefaultFolderId(mapId);
             changed = true;
           }
@@ -166,10 +154,10 @@ class MigrationService {
         await isar.grenades.putAll(grenadesToFix);
       });
     }
-
     return grenadesToFix.length;
   }
 
+  /// 将迁出当前数据目录的本地媒体路径重定向回当前目录同名文件。
   Future<int> migrateMediaPathsToCurrentDirectory() async {
     final dataDir = (isar.directory ?? '').trim();
     if (dataDir.isEmpty) return 0;
@@ -187,13 +175,11 @@ class MigrationService {
       final fileName = p.posix.basename(trimmed.replaceAll('\\', '/')).trim();
       if (fileName.isEmpty) return null;
       final candidate = p.join(dataDir, fileName);
-      if (!File(candidate).existsSync()) return null;
-      return candidate;
+      return File(candidate).existsSync() ? candidate : null;
     }
 
     final mediasToUpdate = <StepMedia>[];
-    final allMedias = await isar.stepMedias.where().findAll();
-    for (final media in allMedias) {
+    for (final media in await isar.stepMedias.where().findAll()) {
       final relocated = relocateIfNeeded(media.localPath);
       if (relocated != null) {
         media.localPath = relocated;
@@ -202,8 +188,7 @@ class MigrationService {
     }
 
     final mapsToUpdate = <GameMap>[];
-    final allMaps = await isar.gameMaps.where().findAll();
-    for (final map in allMaps) {
+    for (final map in await isar.gameMaps.where().findAll()) {
       var changed = false;
       final nextBg = relocateIfNeeded(map.backgroundPath);
       if (nextBg != null) {
@@ -219,8 +204,7 @@ class MigrationService {
     }
 
     final layersToUpdate = <MapLayer>[];
-    final allLayers = await isar.mapLayers.where().findAll();
-    for (final layer in allLayers) {
+    for (final layer in await isar.mapLayers.where().findAll()) {
       final nextAsset = relocateIfNeeded(layer.assetPath);
       if (nextAsset != null) {
         layer.assetPath = nextAsset;
