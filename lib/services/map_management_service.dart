@@ -1,13 +1,14 @@
-import 'package:path/path.dart' as p;
 import 'package:grenade_helper/models/map_area.dart';
 import 'package:grenade_helper/models/tag.dart';
 import 'package:isar_community/isar.dart';
+import 'package:path/path.dart' as p;
 
 import '../models.dart';
 import 'data_service.dart';
 import 'favorite_folder_service.dart';
 import 'tag_service.dart';
 
+/// 自定义地图级联删除与资源清理服务
 class MapManagementService {
   final Isar isar;
   final DataService _dataService;
@@ -19,18 +20,12 @@ class MapManagementService {
         _tagService = TagService(isar),
         _favoriteFolderService = FavoriteFolderService(isar);
 
-  static bool isCustomMap(GameMap map) {
-    return !_isAssetPath(map.backgroundPath);
-  }
+  static bool isCustomMap(GameMap map) => !_isAssetPath(map.backgroundPath);
 
-  static bool _isAssetPath(String path) {
-    return path.trim().startsWith('assets/');
-  }
+  static bool _isAssetPath(String path) => path.trim().startsWith('assets/');
 
   Future<int> deleteCustomMaps(List<GameMap> maps) async {
     final targets = maps.where(isCustomMap).toList(growable: false);
-    if (targets.isEmpty) return 0;
-
     for (final map in targets) {
       await _deleteMapCompletely(map);
     }
@@ -61,8 +56,9 @@ class MapManagementService {
         await isar.mapAreas.filter().mapIdEqualTo(map.id).findAll();
     if (remainingAreas.isNotEmpty) {
       await isar.writeTxn(() async {
-        await isar.mapAreas
-            .deleteAll(remainingAreas.map((e) => e.id).toList(growable: false));
+        await isar.mapAreas.deleteAll(
+          remainingAreas.map((e) => e.id).toList(growable: false),
+        );
       });
     }
 
@@ -87,14 +83,15 @@ class MapManagementService {
 
   Set<String> _collectMapAssetFilesToDelete(GameMap map) {
     final dataDir = (isar.directory ?? '').trim();
+    if (dataDir.isEmpty) return const {};
+
+    final normalizedDataDir = p.normalize(dataDir);
     final files = <String>{};
 
     void collect(String rawPath) {
       final trimmed = rawPath.trim();
       if (trimmed.isEmpty || _isAssetPath(trimmed)) return;
-      if (dataDir.isEmpty) return;
       final normalizedPath = p.normalize(trimmed);
-      final normalizedDataDir = p.normalize(dataDir);
       if (p.equals(normalizedPath, normalizedDataDir) ||
           p.isWithin(normalizedDataDir, normalizedPath)) {
         files.add(normalizedPath);

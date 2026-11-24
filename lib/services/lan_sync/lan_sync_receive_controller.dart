@@ -1,168 +1,21 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:isar_community/isar.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
-import '../data_service.dart';
 import 'lan_sync_auth.dart';
+import 'receive/lan_receive_models.dart';
+import 'receive/lan_receive_request_router.dart';
 
-enum LanReceiveTaskStatus { receiving, pending, importing, imported, failed }
+export 'receive/lan_receive_models.dart'
+    show
+        LanIncomingTransferRequest,
+        LanIncomingTransferRequestStatus,
+        LanReceiveTaskStatus,
+        LanReceivedPackageTask;
 
-enum LanIncomingTransferRequestStatus {
-  pending,
-  approved,
-  rejected,
-  uploading,
-  uploadedWaitImport,
-  importing,
-  imported,
-  importFailed,
-  importCancelled,
-  expired
-}
-
-class LanIncomingTransferRequest {
-  final String id;
-  final String fileName;
-  final int sizeBytes;
-  final DateTime requestedAt;
-  final String? remoteAddress;
-  final String senderName;
-  final String scopeSummary;
-  final String syncMode;
-  final String scopeType;
-  final List<String> scopeMapKeys;
-  final String syncEnvelopeId;
-  final String senderNodeId;
-  final String receiverNodeId;
-  final int packageSchemaVersion;
-  final Map<String, String> baseMapBaselineIds;
-  final LanIncomingTransferRequestStatus status;
-  final String? message;
-  final Map<String, dynamic>? importSummary;
-
-  const LanIncomingTransferRequest({
-    required this.id,
-    required this.fileName,
-    required this.sizeBytes,
-    required this.requestedAt,
-    required this.status,
-    this.remoteAddress,
-    this.senderName = '',
-    this.scopeSummary = '',
-    this.syncMode = 'full',
-    this.scopeType = 'all',
-    this.scopeMapKeys = const [],
-    this.syncEnvelopeId = '',
-    this.senderNodeId = '',
-    this.receiverNodeId = '',
-    this.packageSchemaVersion = 3,
-    this.baseMapBaselineIds = const {},
-    this.message,
-    this.importSummary,
-  });
-
-  LanIncomingTransferRequest copyWith({
-    LanIncomingTransferRequestStatus? status,
-    String? message,
-    bool clearMessage = false,
-    Map<String, dynamic>? importSummary,
-    bool clearImportSummary = false,
-  }) {
-    return LanIncomingTransferRequest(
-      id: id,
-      fileName: fileName,
-      sizeBytes: sizeBytes,
-      requestedAt: requestedAt,
-      remoteAddress: remoteAddress,
-      senderName: senderName,
-      scopeSummary: scopeSummary,
-      syncMode: syncMode,
-      scopeType: scopeType,
-      scopeMapKeys: scopeMapKeys,
-      syncEnvelopeId: syncEnvelopeId,
-      senderNodeId: senderNodeId,
-      receiverNodeId: receiverNodeId,
-      packageSchemaVersion: packageSchemaVersion,
-      baseMapBaselineIds: baseMapBaselineIds,
-      status: status ?? this.status,
-      message: clearMessage ? null : (message ?? this.message),
-      importSummary:
-          clearImportSummary ? null : (importSummary ?? this.importSummary),
-    );
-  }
-}
-
-class LanReceivedPackageTask {
-  final String id;
-  final String filePath;
-  final String fileName;
-  final int sizeBytes;
-  final int bytesReceived;
-  final int? expectedBytes;
-  final String? transferRequestId;
-  final String? syncEnvelopeId;
-  final DateTime receivedAt;
-  final String? remoteAddress;
-  final LanReceiveTaskStatus status;
-  final String? message;
-
-  const LanReceivedPackageTask({
-    required this.id,
-    required this.filePath,
-    required this.fileName,
-    required this.sizeBytes,
-    this.bytesReceived = 0,
-    this.expectedBytes,
-    this.transferRequestId,
-    this.syncEnvelopeId,
-    required this.receivedAt,
-    required this.status,
-    this.remoteAddress,
-    this.message,
-  });
-
-  LanReceivedPackageTask copyWith({
-    LanReceiveTaskStatus? status,
-    String? message,
-    bool clearMessage = false,
-    int? sizeBytes,
-    int? bytesReceived,
-    int? expectedBytes,
-    bool clearExpectedBytes = false,
-    String? transferRequestId,
-    String? syncEnvelopeId,
-  }) {
-    return LanReceivedPackageTask(
-      id: id,
-      filePath: filePath,
-      fileName: fileName,
-      sizeBytes: sizeBytes ?? this.sizeBytes,
-      bytesReceived: bytesReceived ?? this.bytesReceived,
-      expectedBytes:
-          clearExpectedBytes ? null : (expectedBytes ?? this.expectedBytes),
-      transferRequestId: transferRequestId ?? this.transferRequestId,
-      syncEnvelopeId: syncEnvelopeId ?? this.syncEnvelopeId,
-      receivedAt: receivedAt,
-      remoteAddress: remoteAddress,
-      status: status ?? this.status,
-      message: clearMessage ? null : (message ?? this.message),
-    );
-  }
-
-  double? get progress {
-    final total = expectedBytes;
-    if (total == null || total <= 0) return null;
-    final p = bytesReceived / total;
-    if (p.isNaN) return null;
-    return p.clamp(0.0, 1.0);
-  }
-}
-
+/// 局域网同步接收服务门面控制器
 class LanSyncReceiveController extends ChangeNotifier {
   final Isar isar;
   String _localNodeId;
@@ -174,11 +27,12 @@ class LanSyncReceiveController extends ChangeNotifier {
   final List<LanReceivedPackageTask> _tasks = [];
   final List<LanIncomingTransferRequest> _incomingRequests = [];
   final Map<String, String> _trustedPeerSecrets = <String, String>{};
-  final Map<String, int> _nonceSeenAt = <String, int>{};
   String _localDeviceName = Platform.localHostname;
   bool _requireAuthForUpload = false;
   String? _activePairCode;
   int? _activePairCodeExpireAtMs;
+  late final LanReceiveRequestRouter _router =
+      LanReceiveRequestRouter(_ControllerRouterDelegate(this));
 
   LanSyncReceiveController({
     required this.isar,
@@ -205,12 +59,14 @@ class LanSyncReceiveController extends ChangeNotifier {
       List.unmodifiable(_incomingRequests);
   int get trustedPeerCount => _trustedPeerSecrets.length;
 
-  String get healthPath => '/v1/health';
-  String get pairPath => '/v1/pair/request';
-  String get transferRequestPath => '/v1/transfer/request';
-  String get transferRequestStatusPath => '/v1/transfer/request_status';
-  String get transferManifestPath => '/v1/transfer/manifest';
-  String get uploadPath => '/v1/transfer/package';
+  String get healthPath => LanReceiveRequestRouter.healthPath;
+  String get pairPath => LanReceiveRequestRouter.pairPath;
+  String get transferRequestPath => LanReceiveRequestRouter.transferRequestPath;
+  String get transferRequestStatusPath =>
+      LanReceiveRequestRouter.transferRequestStatusPath;
+  String get transferManifestPath =>
+      LanReceiveRequestRouter.transferManifestPath;
+  String get uploadPath => LanReceiveRequestRouter.uploadPath;
 
   void setLocalNodeId(String nodeId) {
     final next = nodeId.trim();
@@ -263,8 +119,9 @@ class LanSyncReceiveController extends ChangeNotifier {
       final next = <String>{};
       for (final iface in interfaces) {
         for (final addr in iface.addresses) {
-          if (addr.isLoopback) continue;
-          if (addr.type != InternetAddressType.IPv4) continue;
+          if (addr.isLoopback || addr.type != InternetAddressType.IPv4) {
+            continue;
+          }
           next.add(addr.address);
         }
       }
@@ -286,7 +143,7 @@ class LanSyncReceiveController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      HttpServer? server;
+      HttpServer server;
       try {
         server = await HttpServer.bind(
           InternetAddress.anyIPv4,
@@ -302,8 +159,8 @@ class LanSyncReceiveController extends ChangeNotifier {
       }
 
       _server = server;
-      _server!.listen(
-        (request) => unawaited(_handleRequest(request)),
+      server.listen(
+        (request) => unawaited(_router.handleRequest(request)),
         onError: (Object e, StackTrace st) {
           _lastError = '接收服务异常: $e';
           notifyListeners();
@@ -328,76 +185,6 @@ class LanSyncReceiveController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _handleRequest(HttpRequest request) async {
-    try {
-      final path = request.uri.path;
-      if (request.method == 'GET' && path == healthPath) {
-        _writeJson(request.response, HttpStatus.ok, {
-          'ok': true,
-          'service': 'grenade_helper_lan_sync_receiver',
-          'port': port,
-          'nodeId': _localNodeId,
-          'displayName': _localDeviceName,
-          'deviceId': _localNodeId, // legacy compatibility
-          'deviceName': _localDeviceName, // legacy compatibility
-          'requireAuthForUpload': _requireAuthForUpload,
-          'trustedPeerCount': _trustedPeerSecrets.length,
-          'capabilities': {
-            'fullSyncV3': true,
-            'deltaSyncV6Manifest': true,
-            'requestStatusImportAck': true,
-          },
-          'time': DateTime.now().toIso8601String(),
-        });
-        return;
-      }
-
-      if (request.method == 'POST' && path == pairPath) {
-        await _handlePairRequest(request);
-        return;
-      }
-
-      if (request.method == 'POST' && path == transferRequestPath) {
-        await _handleTransferRequest(request);
-        return;
-      }
-
-      if (request.method == 'GET' && path == transferRequestStatusPath) {
-        await _handleTransferRequestStatus(request);
-        return;
-      }
-
-      if (request.method == 'POST' && path == transferManifestPath) {
-        await _handleTransferManifest(request);
-        return;
-      }
-
-      if (request.method == 'POST' && path == uploadPath) {
-        await _handlePackageUpload(request);
-        return;
-      }
-
-      _writeJson(request.response, HttpStatus.notFound, {
-        'ok': false,
-        'error': 'not_found',
-      });
-    } catch (e) {
-      _lastError = '处理请求失败: $e';
-      notifyListeners();
-      try {
-        _writeJson(request.response, HttpStatus.internalServerError, {
-          'ok': false,
-          'error': 'internal_error',
-          'message': '$e',
-        });
-      } catch (_) {
-        try {
-          await request.response.close();
-        } catch (_) {}
-      }
-    }
-  }
-
   bool _hasValidPairCode(String code) {
     final now = DateTime.now().millisecondsSinceEpoch;
     if (_activePairCode == null || _activePairCodeExpireAtMs == null) {
@@ -410,529 +197,50 @@ class LanSyncReceiveController extends ChangeNotifier {
     return _activePairCode == code.trim();
   }
 
-  Future<void> _handlePairRequest(HttpRequest request) async {
-    final rawBody = await utf8.decoder.bind(request).join();
-    Map<String, dynamic> body;
-    try {
-      final decoded = jsonDecode(rawBody);
-      if (decoded is! Map) {
-        throw const FormatException('bad_body');
-      }
-      body = Map<String, dynamic>.from(decoded);
-    } catch (_) {
-      _writeJson(request.response, HttpStatus.badRequest, {
-        'ok': false,
-        'error': 'bad_json',
-      });
-      return;
-    }
-
-    final pairCode = (body['pairCode'] as String? ?? '').trim();
-    final peerId = (body['peerId'] as String? ?? '').trim();
-    final deviceName = (body['deviceName'] as String? ?? '').trim();
-
-    if (pairCode.isEmpty || peerId.isEmpty) {
-      _writeJson(request.response, HttpStatus.badRequest, {
-        'ok': false,
-        'error': 'missing_fields',
-      });
-      return;
-    }
-    if (!_hasValidPairCode(pairCode)) {
-      _writeJson(request.response, HttpStatus.unauthorized, {
-        'ok': false,
-        'error': 'invalid_pair_code',
-      });
-      return;
-    }
-
-    final secret = LanSyncAuth.generateSecret(bytes: 24);
-    _trustedPeerSecrets[peerId] = secret;
-    notifyListeners();
-
-    _writeJson(request.response, HttpStatus.ok, {
-      'ok': true,
-      'peerId': peerId,
-      'sharedSecret': secret,
-      'remoteDeviceId': _localNodeId,
-      'remoteDeviceName': _localDeviceName,
-      'acceptedAt': DateTime.now().toIso8601String(),
-      'clientDeviceName': deviceName,
-    });
-  }
-
-  void _cleanupNonceCache() {
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final expiryBefore = now - const Duration(minutes: 10).inMilliseconds;
-    _nonceSeenAt.removeWhere((_, ts) => ts < expiryBefore);
-  }
-
-  String? _verifyUploadSignature({
-    required String method,
-    required String path,
-    required List<int> bodyBytes,
-    required HttpHeaders headers,
-  }) {
-    final peerId = headers.value('x-lan-peer-id')?.trim() ?? '';
-    final tsRaw = headers.value('x-lan-ts')?.trim() ?? '';
-    final nonce = headers.value('x-lan-nonce')?.trim() ?? '';
-    final bodyShaHeader = headers.value('x-lan-body-sha256')?.trim() ?? '';
-    final sign = headers.value('x-lan-sign')?.trim() ?? '';
-
-    if (peerId.isEmpty ||
-        tsRaw.isEmpty ||
-        nonce.isEmpty ||
-        bodyShaHeader.isEmpty ||
-        sign.isEmpty) {
-      return 'missing_signature_headers';
-    }
-
-    final ts = int.tryParse(tsRaw);
-    if (ts == null) return 'invalid_timestamp';
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final skew = (now - ts).abs();
-    if (skew > const Duration(minutes: 5).inMilliseconds) {
-      return 'timestamp_out_of_range';
-    }
-
-    _cleanupNonceCache();
-    final nonceKey = '$peerId|$nonce';
-    if (_nonceSeenAt.containsKey(nonceKey)) {
-      return 'replayed_nonce';
-    }
-
-    final secret = _trustedPeerSecrets[peerId];
-    if (secret == null || secret.trim().isEmpty) {
-      return 'unknown_peer';
-    }
-
-    final actualBodySha = LanSyncAuth.sha256Hex(bodyBytes);
-    if (!LanSyncAuth.constantTimeEquals(bodyShaHeader, actualBodySha)) {
-      return 'body_hash_mismatch';
-    }
-
-    final payload = LanSyncAuth.buildSigningPayload(
-      method: method,
-      path: path,
-      timestampMs: tsRaw,
-      nonce: nonce,
-      bodySha256: bodyShaHeader,
-      peerId: peerId,
-    );
-    final expectedSign =
-        LanSyncAuth.hmacSha256Hex(secret: secret, payload: payload);
-    if (!LanSyncAuth.constantTimeEquals(sign, expectedSign)) {
-      return 'bad_signature';
-    }
-
-    _nonceSeenAt[nonceKey] = now;
-    return null;
-  }
-
   LanIncomingTransferRequest? _findIncomingRequest(String id) {
-    for (final r in _incomingRequests) {
-      if (r.id == id) return r;
+    for (final request in _incomingRequests) {
+      if (request.id == id) return request;
     }
     return null;
+  }
+
+  void _updateTask(
+    String taskId, {
+    LanReceiveTaskStatus? status,
+    String? message,
+    bool clearMessage = false,
+    int? sizeBytes,
+    int? bytesReceived,
+  }) {
+    final index = _tasks.indexWhere((e) => e.id == taskId);
+    if (index < 0) return;
+    _tasks[index] = _tasks[index].copyWith(
+      status: status,
+      message: message,
+      clearMessage: clearMessage,
+      sizeBytes: sizeBytes,
+      bytesReceived: bytesReceived,
+    );
+    notifyListeners();
   }
 
   Future<void> approveIncomingRequest(String requestId) async {
-    final index = _incomingRequests.indexWhere((e) => e.id == requestId);
-    if (index < 0) return;
-    _incomingRequests[index] = _incomingRequests[index].copyWith(
-      status: LanIncomingTransferRequestStatus.approved,
+    await markIncomingRequestStatus(
+      requestId,
+      LanIncomingTransferRequestStatus.approved,
       clearMessage: true,
     );
-    notifyListeners();
   }
 
-  Future<void> rejectIncomingRequest(String requestId,
-      {String? message}) async {
-    final index = _incomingRequests.indexWhere((e) => e.id == requestId);
-    if (index < 0) return;
-    _incomingRequests[index] = _incomingRequests[index].copyWith(
-      status: LanIncomingTransferRequestStatus.rejected,
+  Future<void> rejectIncomingRequest(
+    String requestId, {
+    String? message,
+  }) async {
+    await markIncomingRequestStatus(
+      requestId,
+      LanIncomingTransferRequestStatus.rejected,
       message: message ?? '接收方已拒绝',
     );
-    notifyListeners();
-  }
-
-  Future<void> _handleTransferRequest(HttpRequest request) async {
-    final rawBody = await utf8.decoder.bind(request).join();
-    Map<String, dynamic> body;
-    try {
-      final decoded = jsonDecode(rawBody);
-      if (decoded is! Map) throw const FormatException('bad_body');
-      body = Map<String, dynamic>.from(decoded);
-    } catch (_) {
-      _writeJson(request.response, HttpStatus.badRequest, {
-        'ok': false,
-        'error': 'bad_json',
-      });
-      return;
-    }
-
-    final fileName = _normalizePackageFileName(body['fileName'] as String?);
-    final sizeBytes = body['sizeBytes'] as int? ?? 0;
-    final senderName = (body['senderName'] as String? ?? '').trim();
-    final scopeSummary = (body['scopeSummary'] as String? ?? '').trim();
-    final syncMode = (body['syncMode'] as String? ?? 'full').trim();
-    final scopeType = (body['scopeType'] as String? ?? 'all').trim();
-    final scopeMapKeys = ((body['scopeMapKeys'] as List?) ?? const [])
-        .map((e) => '$e'.trim())
-        .where((e) => e.isNotEmpty)
-        .toList(growable: false);
-    final syncEnvelopeId = (body['syncEnvelopeId'] as String? ?? '').trim();
-    final senderNodeId = (body['senderNodeId'] as String? ?? '').trim();
-    final receiverNodeId = (body['receiverNodeId'] as String? ?? '').trim();
-    final packageSchemaVersion =
-        body['packageSchemaVersion'] as int? ?? (syncMode == 'delta' ? 6 : 3);
-    final baseMapBaselineIds = <String, String>{};
-    if (body['baseMapBaselineIds'] is Map) {
-      final map = Map<String, dynamic>.from(body['baseMapBaselineIds'] as Map);
-      for (final entry in map.entries) {
-        final key = entry.key.trim();
-        final value = '${entry.value}'.trim();
-        if (key.isNotEmpty && value.isNotEmpty) {
-          baseMapBaselineIds[key] = value;
-        }
-      }
-    }
-    if (sizeBytes <= 0) {
-      _writeJson(request.response, HttpStatus.badRequest, {
-        'ok': false,
-        'error': 'invalid_size',
-      });
-      return;
-    }
-
-    final id = 'req_${DateTime.now().microsecondsSinceEpoch}';
-    final incoming = LanIncomingTransferRequest(
-      id: id,
-      fileName: fileName,
-      sizeBytes: sizeBytes,
-      requestedAt: DateTime.now(),
-      remoteAddress: request.connectionInfo?.remoteAddress.address,
-      senderName: senderName,
-      scopeSummary: scopeSummary,
-      syncMode: syncMode,
-      scopeType: scopeType,
-      scopeMapKeys: scopeMapKeys,
-      syncEnvelopeId: syncEnvelopeId.isEmpty
-          ? 'env_${DateTime.now().microsecondsSinceEpoch}'
-          : syncEnvelopeId,
-      senderNodeId: senderNodeId,
-      receiverNodeId: receiverNodeId,
-      packageSchemaVersion: packageSchemaVersion,
-      baseMapBaselineIds: baseMapBaselineIds,
-      status: LanIncomingTransferRequestStatus.pending,
-    );
-    _incomingRequests.insert(0, incoming);
-    if (_incomingRequests.length > 100) {
-      _incomingRequests.removeRange(100, _incomingRequests.length);
-    }
-    notifyListeners();
-
-    _writeJson(request.response, HttpStatus.ok, {
-      'ok': true,
-      'requestId': id,
-      'status': 'pending',
-      'syncMode': incoming.syncMode,
-      'scopeType': incoming.scopeType,
-      'scopeMapKeys': incoming.scopeMapKeys,
-      'syncEnvelopeId': incoming.syncEnvelopeId,
-    });
-  }
-
-  Future<void> _handleTransferManifest(HttpRequest request) async {
-    final rawBody = await utf8.decoder.bind(request).join();
-    Map<String, dynamic> body;
-    try {
-      final decoded = jsonDecode(rawBody);
-      if (decoded is! Map) throw const FormatException('bad_body');
-      body = Map<String, dynamic>.from(decoded);
-    } catch (_) {
-      _writeJson(request.response, HttpStatus.badRequest, {
-        'ok': false,
-        'error': 'bad_json',
-      });
-      return;
-    }
-
-    final manifestSchemaVersion = body['manifestSchemaVersion'] as int? ?? 0;
-    if (manifestSchemaVersion != 1) {
-      _writeJson(request.response, HttpStatus.preconditionFailed, {
-        'ok': false,
-        'error': 'unsupported_manifest_schema',
-      });
-      return;
-    }
-
-    final scopeMapKeys = ((body['scopeMapKeys'] as List?) ?? const [])
-        .map((e) => '$e'.trim())
-        .where((e) => e.isNotEmpty)
-        .toSet();
-    final dataService = DataService(isar);
-    final manifest = await dataService.buildLanSyncManifest(
-      mapKeys: scopeMapKeys,
-    );
-    final payload = manifest.toManifestJson();
-    _writeJson(request.response, HttpStatus.ok, {
-      'ok': true,
-      ...payload,
-    });
-  }
-
-  Future<void> _handleTransferRequestStatus(HttpRequest request) async {
-    final id = (request.uri.queryParameters['id'] ?? '').trim();
-    if (id.isEmpty) {
-      _writeJson(request.response, HttpStatus.badRequest, {
-        'ok': false,
-        'error': 'missing_id',
-      });
-      return;
-    }
-    final incoming = _findIncomingRequest(id);
-    if (incoming == null) {
-      _writeJson(request.response, HttpStatus.notFound, {
-        'ok': false,
-        'error': 'request_not_found',
-      });
-      return;
-    }
-    _writeJson(request.response, HttpStatus.ok, {
-      'ok': true,
-      'requestId': incoming.id,
-      'status': incoming.status.name,
-      'message': incoming.message,
-      'syncMode': incoming.syncMode,
-      'scopeType': incoming.scopeType,
-      'scopeMapKeys': incoming.scopeMapKeys,
-      'syncEnvelopeId': incoming.syncEnvelopeId,
-      'importSummary': incoming.importSummary,
-    });
-  }
-
-  Future<void> _handlePackageUpload(HttpRequest request) async {
-    final incomingRequestId =
-        (request.headers.value('x-transfer-request-id') ?? '').trim();
-    if (incomingRequestId.isEmpty) {
-      _writeJson(request.response, HttpStatus.preconditionFailed, {
-        'ok': false,
-        'error': 'missing_transfer_request_id',
-      });
-      return;
-    }
-    final incoming = _findIncomingRequest(incomingRequestId);
-    if (incoming == null) {
-      _writeJson(request.response, HttpStatus.notFound, {
-        'ok': false,
-        'error': 'request_not_found',
-      });
-      return;
-    }
-    if (incoming.status == LanIncomingTransferRequestStatus.rejected) {
-      _writeJson(request.response, HttpStatus.forbidden, {
-        'ok': false,
-        'error': 'request_rejected',
-        'message': incoming.message,
-      });
-      return;
-    }
-    if (incoming.status != LanIncomingTransferRequestStatus.approved) {
-      _writeJson(request.response, HttpStatus.preconditionFailed, {
-        'ok': false,
-        'error': 'request_not_approved',
-      });
-      return;
-    }
-    final requestIndex =
-        _incomingRequests.indexWhere((e) => e.id == incoming.id);
-    if (requestIndex >= 0) {
-      _incomingRequests[requestIndex] =
-          _incomingRequests[requestIndex].copyWith(
-        status: LanIncomingTransferRequestStatus.uploading,
-        clearMessage: true,
-      );
-      notifyListeners();
-    }
-
-    final fileNameParam = request.uri.queryParameters['filename'] ??
-        request.headers.value('x-file-name');
-    final fileName = _normalizePackageFileName(fileNameParam);
-
-    final inboxDir = await _getInboxDir();
-    final taskId = DateTime.now().microsecondsSinceEpoch.toString();
-    final filePath = p.join(inboxDir.path, '${taskId}_$fileName');
-    final file = File(filePath);
-    final expectedBytes = incoming.sizeBytes > 0
-        ? incoming.sizeBytes
-        : int.tryParse(
-            request.headers.value(HttpHeaders.contentLengthHeader) ?? '');
-    final signedBodyMode = _requireAuthForUpload ||
-        (request.headers.value('x-lan-sign')?.trim().isNotEmpty == true);
-    final task = LanReceivedPackageTask(
-      id: taskId,
-      filePath: filePath,
-      fileName: fileName,
-      sizeBytes: 0,
-      bytesReceived: 0,
-      expectedBytes: expectedBytes,
-      transferRequestId: incomingRequestId,
-      syncEnvelopeId: incoming.syncEnvelopeId,
-      receivedAt: DateTime.now(),
-      remoteAddress: request.connectionInfo?.remoteAddress.address,
-      status: LanReceiveTaskStatus.receiving,
-      message: '传输中...',
-    );
-    _tasks.insert(0, task);
-    notifyListeners();
-
-    var receivedBytes = 0;
-    final sink = file.openWrite();
-    List<int>? bufferedForSign;
-    if (signedBodyMode) {
-      bufferedForSign = <int>[];
-    }
-    try {
-      await for (final chunk in request) {
-        sink.add(chunk);
-        receivedBytes += chunk.length;
-        if (bufferedForSign != null) {
-          bufferedForSign.addAll(chunk);
-        }
-        final index = _tasks.indexWhere((e) => e.id == taskId);
-        if (index >= 0) {
-          _tasks[index] = _tasks[index].copyWith(
-            bytesReceived: receivedBytes,
-            sizeBytes: receivedBytes,
-          );
-          notifyListeners();
-        }
-      }
-      await sink.flush();
-    } finally {
-      await sink.close();
-    }
-
-    if (signedBodyMode) {
-      final bytes = bufferedForSign ?? const <int>[];
-      final verifyError = _verifyUploadSignature(
-        method: request.method,
-        path: request.uri.path,
-        bodyBytes: bytes,
-        headers: request.headers,
-      );
-      if (verifyError != null) {
-        final index = _tasks.indexWhere((e) => e.id == taskId);
-        if (index >= 0) {
-          _tasks[index] = _tasks[index].copyWith(
-            status: LanReceiveTaskStatus.failed,
-            message: verifyError,
-            sizeBytes: receivedBytes,
-            bytesReceived: receivedBytes,
-          );
-          notifyListeners();
-        }
-        final incomingIndex =
-            _incomingRequests.indexWhere((e) => e.id == incoming.id);
-        if (incomingIndex >= 0) {
-          _incomingRequests[incomingIndex] =
-              _incomingRequests[incomingIndex].copyWith(
-            status: LanIncomingTransferRequestStatus.importFailed,
-            message: verifyError,
-          );
-          notifyListeners();
-        }
-        _writeJson(request.response, HttpStatus.unauthorized, {
-          'ok': false,
-          'error': verifyError,
-        });
-        return;
-      }
-    }
-
-    final size = await file.length();
-    if (size <= 0) {
-      if (await file.exists()) {
-        await file.delete();
-      }
-      final index = _tasks.indexWhere((e) => e.id == taskId);
-      if (index >= 0) {
-        _tasks[index] = _tasks[index].copyWith(
-          status: LanReceiveTaskStatus.failed,
-          message: '空文件',
-        );
-        notifyListeners();
-      }
-      final incomingIndex =
-          _incomingRequests.indexWhere((e) => e.id == incoming.id);
-      if (incomingIndex >= 0) {
-        _incomingRequests[incomingIndex] =
-            _incomingRequests[incomingIndex].copyWith(
-          status: LanIncomingTransferRequestStatus.importFailed,
-          message: '空文件',
-        );
-        notifyListeners();
-      }
-      _writeJson(request.response, HttpStatus.badRequest, {
-        'ok': false,
-        'error': 'empty_file',
-      });
-      return;
-    }
-
-    final taskIndex = _tasks.indexWhere((e) => e.id == taskId);
-    if (taskIndex >= 0) {
-      _tasks[taskIndex] = _tasks[taskIndex].copyWith(
-        status: LanReceiveTaskStatus.pending,
-        message: '等待导入',
-        sizeBytes: size,
-        bytesReceived: size,
-      );
-      notifyListeners();
-    }
-    final incomingIndex =
-        _incomingRequests.indexWhere((e) => e.id == incoming.id);
-    if (incomingIndex >= 0) {
-      _incomingRequests[incomingIndex] =
-          _incomingRequests[incomingIndex].copyWith(
-        status: LanIncomingTransferRequestStatus.uploadedWaitImport,
-        message: '等待导入',
-        clearImportSummary: true,
-      );
-      notifyListeners();
-    }
-
-    _writeJson(request.response, HttpStatus.ok, {
-      'ok': true,
-      'transferRequestId': incomingRequestId,
-      'taskId': taskId,
-      'syncEnvelopeId': incoming.syncEnvelopeId,
-      'fileName': fileName,
-      'sizeBytes': size,
-      'signed': signedBodyMode,
-    });
-  }
-
-  Future<Directory> _getInboxDir() async {
-    final tempDir = await getTemporaryDirectory();
-    final inbox = Directory(p.join(tempDir.path, 'lan_sync_inbox'));
-    if (!await inbox.exists()) {
-      await inbox.create(recursive: true);
-    }
-    return inbox;
-  }
-
-  String _normalizePackageFileName(String? fileName) {
-    final raw = (fileName ?? '').trim();
-    final fallback = 'sync_package.cs2pkg';
-    final base = raw.isEmpty ? fallback : p.basename(raw);
-    final sanitized = base.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
-    if (sanitized.toLowerCase().endsWith('.cs2pkg')) {
-      return sanitized;
-    }
-    return '$sanitized.cs2pkg';
   }
 
   Future<void> markTaskStatus(
@@ -941,14 +249,12 @@ class LanSyncReceiveController extends ChangeNotifier {
     String? message,
     bool clearMessage = false,
   }) async {
-    final index = _tasks.indexWhere((e) => e.id == taskId);
-    if (index < 0) return;
-    _tasks[index] = _tasks[index].copyWith(
+    _updateTask(
+      taskId,
       status: status,
       message: message,
       clearMessage: clearMessage,
     );
-    notifyListeners();
   }
 
   Future<void> markIncomingRequestStatus(
@@ -994,14 +300,6 @@ class LanSyncReceiveController extends ChangeNotifier {
     }
   }
 
-  void _writeJson(
-      HttpResponse response, int statusCode, Map<String, dynamic> body) {
-    response.statusCode = statusCode;
-    response.headers.contentType = ContentType.json;
-    response.write(jsonEncode(body));
-    response.close();
-  }
-
   @override
   void notifyListeners() {
     if (_disposed) return;
@@ -1017,5 +315,100 @@ class LanSyncReceiveController extends ChangeNotifier {
       unawaited(server.close(force: true));
     }
     super.dispose();
+  }
+}
+
+class _ControllerRouterDelegate implements LanReceiveRouterDelegate {
+  final LanSyncReceiveController _controller;
+
+  const _ControllerRouterDelegate(this._controller);
+
+  @override
+  Isar get isar => _controller.isar;
+
+  @override
+  int? get port => _controller.port;
+
+  @override
+  String get localNodeId => _controller.localNodeId;
+
+  @override
+  String get localDeviceName => _controller.localDeviceName;
+
+  @override
+  bool get requireAuthForUpload => _controller.requireAuthForUpload;
+
+  @override
+  Map<String, String> get trustedPeerSecrets => _controller._trustedPeerSecrets;
+
+  @override
+  bool verifyPairCode(String code) => _controller._hasValidPairCode(code);
+
+  @override
+  void saveTrustedPeerSecret(String peerId, String secret) {
+    _controller._trustedPeerSecrets[peerId] = secret;
+    _controller.notifyListeners();
+  }
+
+  @override
+  LanIncomingTransferRequest? findIncomingRequest(String id) =>
+      _controller._findIncomingRequest(id);
+
+  @override
+  void prependIncomingRequest(LanIncomingTransferRequest incoming) {
+    _controller._incomingRequests.insert(0, incoming);
+    if (_controller._incomingRequests.length > 100) {
+      _controller._incomingRequests
+          .removeRange(100, _controller._incomingRequests.length);
+    }
+    _controller.notifyListeners();
+  }
+
+  @override
+  void updateIncomingRequest(
+    String requestId,
+    LanIncomingTransferRequestStatus status, {
+    String? message,
+    bool clearMessage = false,
+    bool clearImportSummary = false,
+  }) {
+    unawaited(_controller.markIncomingRequestStatus(
+      requestId,
+      status,
+      message: message,
+      clearMessage: clearMessage,
+      clearImportSummary: clearImportSummary,
+    ));
+  }
+
+  @override
+  void prependTask(LanReceivedPackageTask task) {
+    _controller._tasks.insert(0, task);
+    _controller.notifyListeners();
+  }
+
+  @override
+  void updateTask(
+    String taskId, {
+    LanReceiveTaskStatus? status,
+    String? message,
+    bool clearMessage = false,
+    int? sizeBytes,
+    int? bytesReceived,
+  }) {
+    _controller._updateTask(
+      taskId,
+      status: status,
+      message: message,
+      clearMessage: clearMessage,
+      sizeBytes: sizeBytes,
+      bytesReceived: bytesReceived,
+    );
+  }
+
+  @override
+  void reportRequestError(String message) {
+    _controller._lastError = message;
+    _controller.notifyListeners();
   }
 }

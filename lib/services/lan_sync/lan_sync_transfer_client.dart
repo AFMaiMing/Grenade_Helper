@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 
 import 'lan_sync_auth.dart';
 
+/// 同步包上传响应
 class LanSyncTransferResponse {
   final int statusCode;
   final String body;
@@ -18,6 +19,7 @@ class LanSyncTransferResponse {
   bool get isSuccess => statusCode >= 200 && statusCode < 300;
 }
 
+/// 配对请求响应
 class LanSyncPairResponse {
   final bool ok;
   final int statusCode;
@@ -38,6 +40,7 @@ class LanSyncPairResponse {
   });
 }
 
+/// 传输申请与状态查询响应
 class LanSyncTransferRequestResponse {
   final bool ok;
   final int statusCode;
@@ -66,6 +69,7 @@ class LanSyncTransferRequestResponse {
   });
 }
 
+/// 远端同步清单条目摘要
 class LanSyncRemoteManifestItem {
   final String digest;
   final int updatedAtMs;
@@ -78,6 +82,7 @@ class LanSyncRemoteManifestItem {
   });
 }
 
+/// 远端增量清单响应
 class LanSyncRemoteManifestResponse {
   final bool ok;
   final int statusCode;
@@ -106,11 +111,79 @@ class LanSyncRemoteManifestResponse {
   });
 }
 
+/// 局域网同步 HTTP 客户端
 class LanSyncTransferClient {
   static const String pairPath = '/v1/pair/request';
   static const String transferRequestPath = '/v1/transfer/request';
   static const String transferRequestStatusPath = '/v1/transfer/request_status';
   static const String transferManifestPath = '/v1/transfer/manifest';
+  static const Duration _connectTimeout = Duration(seconds: 10);
+
+  static Future<T> _withClient<T>(
+    Future<T> Function(HttpClient client) action,
+  ) async {
+    final client = HttpClient()..connectionTimeout = _connectTimeout;
+    try {
+      return await action(client);
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  static Future<(int statusCode, String body)> _postJson(
+    HttpClient client,
+    Uri uri,
+    Map<String, dynamic> payload,
+  ) async {
+    final request = await client.postUrl(uri);
+    request.headers.contentType = ContentType.json;
+    request.write(jsonEncode(payload));
+    final response = await request.close();
+    final body = await utf8.decoder.bind(response).join();
+    return (response.statusCode, body);
+  }
+
+  static List<String> _normalizeStringList(Iterable<Object?> items) {
+    return items
+        .map((e) => '$e'.trim())
+        .where((e) => e.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  static LanSyncTransferRequestResponse _decodeTransferRequestResponse(
+    int statusCode,
+    String body,
+  ) {
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is Map) {
+        return LanSyncTransferRequestResponse(
+          ok: (decoded['ok'] == true) && statusCode >= 200 && statusCode < 300,
+          statusCode: statusCode,
+          body: body,
+          requestId: (decoded['requestId'] as String? ?? '').trim(),
+          status: (decoded['status'] as String? ?? '').trim(),
+          message: decoded['message'] as String?,
+          syncMode: (decoded['syncMode'] as String? ?? '').trim(),
+          scopeType: (decoded['scopeType'] as String? ?? '').trim(),
+          scopeMapKeys: _normalizeStringList(
+            (decoded['scopeMapKeys'] as List?) ?? const [],
+          ),
+          syncEnvelopeId: (decoded['syncEnvelopeId'] as String? ?? '').trim(),
+          importSummary: decoded['importSummary'] is Map
+              ? Map<String, dynamic>.from(
+                  decoded['importSummary'] as Map<dynamic, dynamic>,
+                )
+              : null,
+        );
+      }
+    } catch (_) {}
+    return LanSyncTransferRequestResponse(
+      ok: false,
+      statusCode: statusCode,
+      body: body,
+    );
+  }
 
   static Future<LanSyncPairResponse> pairRequest({
     required String host,
@@ -119,31 +192,18 @@ class LanSyncTransferClient {
     required String localPeerId,
     required String localDeviceName,
     String path = pairPath,
-  }) async {
-    final uri = Uri(
-      scheme: 'http',
-      host: host,
-      port: port,
-      path: path,
-    );
-    final client = HttpClient();
-    client.connectionTimeout = const Duration(seconds: 10);
-    try {
-      final request = await client.postUrl(uri);
-      request.headers.contentType = ContentType.json;
-      final payload = {
+  }) {
+    final uri = Uri(scheme: 'http', host: host, port: port, path: path);
+    return _withClient((client) async {
+      final (statusCode, body) = await _postJson(client, uri, {
         'pairCode': pairCode,
         'peerId': localPeerId,
         'deviceName': localDeviceName,
-      };
-      request.write(jsonEncode(payload));
-      final response = await request.close();
-      final body = await utf8.decoder.bind(response).join();
-      final isOk = response.statusCode >= 200 && response.statusCode < 300;
-      if (!isOk) {
+      });
+      if (statusCode < 200 || statusCode >= 300) {
         return LanSyncPairResponse(
           ok: false,
-          statusCode: response.statusCode,
+          statusCode: statusCode,
           body: body,
         );
       }
@@ -152,7 +212,7 @@ class LanSyncTransferClient {
         if (map is Map) {
           return LanSyncPairResponse(
             ok: true,
-            statusCode: response.statusCode,
+            statusCode: statusCode,
             body: body,
             peerId: (map['peerId'] as String? ?? '').trim(),
             sharedSecret: (map['sharedSecret'] as String? ?? '').trim(),
@@ -163,12 +223,10 @@ class LanSyncTransferClient {
       } catch (_) {}
       return LanSyncPairResponse(
         ok: false,
-        statusCode: response.statusCode,
+        statusCode: statusCode,
         body: body,
       );
-    } finally {
-      client.close(force: true);
-    }
+    });
   }
 
   static Future<LanSyncTransferResponse> sendPackage({
@@ -195,9 +253,7 @@ class LanSyncTransferClient {
       queryParameters: {'filename': fileName},
     );
 
-    final client = HttpClient();
-    client.connectionTimeout = const Duration(seconds: 10);
-    try {
+    return _withClient((client) async {
       final request = await client.postUrl(uri);
       request.headers.contentType = ContentType.binary;
       request.headers.set('x-file-name', fileName);
@@ -205,9 +261,9 @@ class LanSyncTransferClient {
       if (transferRequestId != null && transferRequestId.trim().isNotEmpty) {
         request.headers.set('x-transfer-request-id', transferRequestId.trim());
       }
-      final signed = (peerId != null && peerId.trim().isNotEmpty) &&
-          (sharedSecret != null && sharedSecret.trim().isNotEmpty);
-      if (signed) {
+      final trimmedPeerId = peerId?.trim() ?? '';
+      final trimmedSecret = sharedSecret?.trim() ?? '';
+      if (trimmedPeerId.isNotEmpty && trimmedSecret.isNotEmpty) {
         final ts = DateTime.now().millisecondsSinceEpoch.toString();
         final nonce = LanSyncAuth.generateNonce();
         final bodySha = await LanSyncAuth.sha256FileHex(filePath);
@@ -217,14 +273,14 @@ class LanSyncTransferClient {
           timestampMs: ts,
           nonce: nonce,
           bodySha256: bodySha,
-          peerId: peerId.trim(),
+          peerId: trimmedPeerId,
         );
         final sign = LanSyncAuth.hmacSha256Hex(
-          secret: sharedSecret.trim(),
+          secret: trimmedSecret,
           payload: payload,
         );
         request.headers
-          ..set('x-lan-peer-id', peerId.trim())
+          ..set('x-lan-peer-id', trimmedPeerId)
           ..set('x-lan-ts', ts)
           ..set('x-lan-nonce', nonce)
           ..set('x-lan-body-sha256', bodySha)
@@ -244,9 +300,7 @@ class LanSyncTransferClient {
         statusCode: response.statusCode,
         body: body,
       );
-    } finally {
-      client.close(force: true);
-    }
+    });
   }
 
   static Future<LanSyncTransferRequestResponse> requestTransfer({
@@ -264,66 +318,24 @@ class LanSyncTransferClient {
     String? receiverNodeId,
     int packageSchemaVersion = 3,
     String path = transferRequestPath,
-  }) async {
+  }) {
     final uri = Uri(scheme: 'http', host: host, port: port, path: path);
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 10);
-    try {
-      final request = await client.postUrl(uri);
-      request.headers.contentType = ContentType.json;
-      final normalizedMapKeys = scopeMapKeys
-          .map((e) => e.trim())
-          .where((e) => e.isNotEmpty)
-          .toList(growable: false);
-      request.write(jsonEncode({
+    return _withClient((client) async {
+      final (statusCode, body) = await _postJson(client, uri, {
         'fileName': fileName,
         'sizeBytes': sizeBytes,
         'senderName': senderName,
         'scopeSummary': scopeSummary,
         'syncMode': syncMode,
         'scopeType': scopeType,
-        'scopeMapKeys': normalizedMapKeys,
+        'scopeMapKeys': _normalizeStringList(scopeMapKeys),
         'syncEnvelopeId': (syncEnvelopeId ?? '').trim(),
         'senderNodeId': (senderNodeId ?? '').trim(),
         'receiverNodeId': (receiverNodeId ?? '').trim(),
         'packageSchemaVersion': packageSchemaVersion,
-      }));
-      final response = await request.close();
-      final body = await utf8.decoder.bind(response).join();
-      try {
-        final decoded = jsonDecode(body);
-        if (decoded is Map) {
-          return LanSyncTransferRequestResponse(
-            ok: (decoded['ok'] == true) &&
-                response.statusCode >= 200 &&
-                response.statusCode < 300,
-            statusCode: response.statusCode,
-            body: body,
-            requestId: (decoded['requestId'] as String? ?? '').trim(),
-            status: (decoded['status'] as String? ?? '').trim(),
-            message: decoded['message'] as String?,
-            syncMode: (decoded['syncMode'] as String? ?? '').trim(),
-            scopeType: (decoded['scopeType'] as String? ?? '').trim(),
-            scopeMapKeys: ((decoded['scopeMapKeys'] as List?) ?? const [])
-                .map((e) => '$e'.trim())
-                .where((e) => e.isNotEmpty)
-                .toList(growable: false),
-            syncEnvelopeId: (decoded['syncEnvelopeId'] as String? ?? '').trim(),
-            importSummary: decoded['importSummary'] is Map
-                ? Map<String, dynamic>.from(
-                    decoded['importSummary'] as Map<dynamic, dynamic>)
-                : null,
-          );
-        }
-      } catch (_) {}
-      return LanSyncTransferRequestResponse(
-        ok: false,
-        statusCode: response.statusCode,
-        body: body,
-      );
-    } finally {
-      client.close(force: true);
-    }
+      });
+      return _decodeTransferRequestResponse(statusCode, body);
+    });
   }
 
   static Map<String, LanSyncRemoteManifestItem> _decodeManifestItemMap(
@@ -337,14 +349,11 @@ class LanSyncTransferClient {
       if (key.isEmpty || entry.value is! Map) continue;
       final value = Map<String, dynamic>.from(entry.value as Map);
       final digest = (value['digest'] as String? ?? '').trim();
-      final updatedAtMs = value['updatedAtMs'] as int? ?? 0;
-      final mapName =
-          (value['mapName'] as String? ?? defaultMapName ?? '').trim();
       if (digest.isEmpty) continue;
       result[key] = LanSyncRemoteManifestItem(
         digest: digest,
-        updatedAtMs: updatedAtMs,
-        mapName: mapName,
+        updatedAtMs: value['updatedAtMs'] as int? ?? 0,
+        mapName: (value['mapName'] as String? ?? defaultMapName ?? '').trim(),
       );
     }
     return result;
@@ -359,26 +368,17 @@ class LanSyncTransferClient {
     String? receiverNodeId,
     int manifestSchemaVersion = 1,
     String path = transferManifestPath,
-  }) async {
+  }) {
     final uri = Uri(scheme: 'http', host: host, port: port, path: path);
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 10);
-    try {
-      final request = await client.postUrl(uri);
-      request.headers.contentType = ContentType.json;
-      request.write(jsonEncode({
+    return _withClient((client) async {
+      final (statusCode, body) = await _postJson(client, uri, {
         'scopeType': scopeType.trim(),
-        'scopeMapKeys': scopeMapKeys
-            .map((e) => e.trim())
-            .where((e) => e.isNotEmpty)
-            .toList(growable: false),
+        'scopeMapKeys': _normalizeStringList(scopeMapKeys),
         'senderNodeId': (senderNodeId ?? '').trim(),
         'receiverNodeId': (receiverNodeId ?? '').trim(),
         'manifestSchemaVersion': manifestSchemaVersion,
-      }));
-      final response = await request.close();
-      final body = await utf8.decoder.bind(response).join();
-      final isOk = response.statusCode >= 200 && response.statusCode < 300;
+      });
+      final isOk = statusCode >= 200 && statusCode < 300;
       try {
         final decoded = jsonDecode(body);
         if (decoded is Map) {
@@ -387,10 +387,9 @@ class LanSyncTransferClient {
           if (grenadesByMap is Map) {
             for (final mapEntry
                 in Map<String, dynamic>.from(grenadesByMap).entries) {
-              final mapName = mapEntry.key.trim();
               grenades.addAll(_decodeManifestItemMap(
                 mapEntry.value,
-                defaultMapName: mapName,
+                defaultMapName: mapEntry.key.trim(),
               ));
             }
           }
@@ -400,38 +399,26 @@ class LanSyncTransferClient {
               : const <String, dynamic>{};
           return LanSyncRemoteManifestResponse(
             ok: (decoded['ok'] == true) && isOk,
-            statusCode: response.statusCode,
+            statusCode: statusCode,
             body: body,
             manifestSchemaVersion:
                 decoded['manifestSchemaVersion'] as int? ?? 0,
             generatedAtMs: decoded['generatedAtMs'] as int? ?? 0,
             grenades: grenades,
-            tags: _decodeManifestItemMap(
-              entities['tag'],
-            ),
-            areas: _decodeManifestItemMap(
-              entities['area'],
-            ),
-            maps: _decodeManifestItemMap(
-              entities['map'],
-            ),
-            favoriteFolders: _decodeManifestItemMap(
-              entities['favoriteFolder'],
-            ),
-            impactGroups: _decodeManifestItemMap(
-              entities['impactGroup'],
-            ),
+            tags: _decodeManifestItemMap(entities['tag']),
+            areas: _decodeManifestItemMap(entities['area']),
+            maps: _decodeManifestItemMap(entities['map']),
+            favoriteFolders: _decodeManifestItemMap(entities['favoriteFolder']),
+            impactGroups: _decodeManifestItemMap(entities['impactGroup']),
           );
         }
       } catch (_) {}
       return LanSyncRemoteManifestResponse(
         ok: false,
-        statusCode: response.statusCode,
+        statusCode: statusCode,
         body: body,
       );
-    } finally {
-      client.close(force: true);
-    }
+    });
   }
 
   static Future<LanSyncTransferRequestResponse> getTransferRequestStatus({
@@ -439,7 +426,7 @@ class LanSyncTransferClient {
     required int port,
     required String requestId,
     String path = transferRequestStatusPath,
-  }) async {
+  }) {
     final uri = Uri(
       scheme: 'http',
       host: host,
@@ -447,45 +434,11 @@ class LanSyncTransferClient {
       path: path,
       queryParameters: {'id': requestId},
     );
-    final client = HttpClient()
-      ..connectionTimeout = const Duration(seconds: 10);
-    try {
+    return _withClient((client) async {
       final request = await client.getUrl(uri);
       final response = await request.close();
       final body = await utf8.decoder.bind(response).join();
-      try {
-        final decoded = jsonDecode(body);
-        if (decoded is Map) {
-          return LanSyncTransferRequestResponse(
-            ok: (decoded['ok'] == true) &&
-                response.statusCode >= 200 &&
-                response.statusCode < 300,
-            statusCode: response.statusCode,
-            body: body,
-            requestId: (decoded['requestId'] as String? ?? '').trim(),
-            status: (decoded['status'] as String? ?? '').trim(),
-            message: decoded['message'] as String?,
-            syncMode: (decoded['syncMode'] as String? ?? '').trim(),
-            scopeType: (decoded['scopeType'] as String? ?? '').trim(),
-            scopeMapKeys: ((decoded['scopeMapKeys'] as List?) ?? const [])
-                .map((e) => '$e'.trim())
-                .where((e) => e.isNotEmpty)
-                .toList(growable: false),
-            syncEnvelopeId: (decoded['syncEnvelopeId'] as String? ?? '').trim(),
-            importSummary: decoded['importSummary'] is Map
-                ? Map<String, dynamic>.from(
-                    decoded['importSummary'] as Map<dynamic, dynamic>)
-                : null,
-          );
-        }
-      } catch (_) {}
-      return LanSyncTransferRequestResponse(
-        ok: false,
-        statusCode: response.statusCode,
-        body: body,
-      );
-    } finally {
-      client.close(force: true);
-    }
+      return _decodeTransferRequestResponse(response.statusCode, body);
+    });
   }
 }

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+/// 局域网发现的接收端设备摘要
 class LanDiscoveryDevice {
   final String host;
   final int port;
@@ -23,8 +24,10 @@ class LanDiscoveryDevice {
   String get deviceName => displayName;
 }
 
+/// 局域网同网段服务探测服务
 class LanSyncDiscoveryService {
   static const String healthPath = '/v1/health';
+  static const String _receiverServiceName = 'grenade_helper_lan_sync_receiver';
 
   Future<List<LanDiscoveryDevice>> scan({
     required List<String> localIps,
@@ -32,6 +35,28 @@ class LanSyncDiscoveryService {
     Duration timeout = const Duration(milliseconds: 450),
     int concurrency = 48,
   }) async {
+    final candidates = _buildCandidateHosts(localIps);
+    if (candidates.isEmpty) return const [];
+
+    final results = <LanDiscoveryDevice>[];
+    final client = HttpClient()..connectionTimeout = timeout;
+    try {
+      for (var i = 0; i < candidates.length; i += concurrency) {
+        final batch = candidates.skip(i).take(concurrency);
+        final found = await Future.wait(
+          batch.map((host) => _probeHost(client, host, port, timeout)),
+        );
+        results.addAll(found.whereType<LanDiscoveryDevice>());
+      }
+    } finally {
+      client.close(force: true);
+    }
+
+    results.sort((a, b) => a.host.compareTo(b.host));
+    return results;
+  }
+
+  List<String> _buildCandidateHosts(List<String> localIps) {
     final prefixes = <String>{};
     final localSet = localIps.toSet();
     for (final ip in localIps) {
@@ -45,31 +70,12 @@ class LanSyncDiscoveryService {
     for (final prefix in prefixes) {
       for (var i = 1; i <= 254; i++) {
         final host = '$prefix$i';
-        if (localSet.contains(host)) continue;
-        candidates.add(host);
-      }
-    }
-
-    final results = <LanDiscoveryDevice>[];
-    final client = HttpClient()..connectionTimeout = timeout;
-    try {
-      for (var i = 0; i < candidates.length; i += concurrency) {
-        final batch = candidates.skip(i).take(concurrency);
-        final found = await Future.wait(
-          batch.map((host) => _probeHost(client, host, port, timeout)),
-        );
-        for (final item in found) {
-          if (item != null) {
-            results.add(item);
-          }
+        if (!localSet.contains(host)) {
+          candidates.add(host);
         }
       }
-    } finally {
-      client.close(force: true);
     }
-
-    results.sort((a, b) => a.host.compareTo(b.host));
-    return results;
+    return candidates;
   }
 
   Future<LanDiscoveryDevice?> _probeHost(
@@ -79,22 +85,17 @@ class LanSyncDiscoveryService {
     Duration timeout,
   ) async {
     try {
-      final uri = Uri(
-        scheme: 'http',
-        host: host,
-        port: port,
-        path: healthPath,
-      );
+      final uri = Uri(scheme: 'http', host: host, port: port, path: healthPath);
       final req = await client.getUrl(uri).timeout(timeout);
       final resp = await req.close().timeout(timeout);
       if (resp.statusCode != 200) return null;
+
       final body = await utf8.decoder.bind(resp).join().timeout(timeout);
       final decoded = jsonDecode(body);
-      if (decoded is! Map) return null;
-      final ok = decoded['ok'] == true;
-      if (!ok) return null;
+      if (decoded is! Map || decoded['ok'] != true) return null;
       final service = (decoded['service'] as String? ?? '').trim();
-      if (service != 'grenade_helper_lan_sync_receiver') return null;
+      if (service != _receiverServiceName) return null;
+
       return LanDiscoveryDevice(
         host: host,
         port: (decoded['port'] as int?) ?? port,

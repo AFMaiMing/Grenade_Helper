@@ -1,17 +1,15 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 
-class LanSyncAuth {
+/// 局域网配对与上传签名认证工具
+abstract final class LanSyncAuth {
   static final Random _random = Random.secure();
 
-  static String generatePairCode() {
-    final value = _random.nextInt(1000000);
-    return value.toString().padLeft(6, '0');
-  }
+  static String generatePairCode() =>
+      _random.nextInt(1000000).toString().padLeft(6, '0');
 
   static String generateSecret({int bytes = 24}) {
     final data = List<int>.generate(bytes, (_) => _random.nextInt(256));

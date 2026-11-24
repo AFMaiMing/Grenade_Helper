@@ -1,10 +1,11 @@
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 
-/// 更新信息
+/// 应用版本更新信息
 class UpdateInfo {
   final int versionCode;
   final String versionName;
@@ -12,7 +13,7 @@ class UpdateInfo {
   final String downloadUrl;
   final bool forceUpdate;
 
-  UpdateInfo({
+  const UpdateInfo({
     required this.versionCode,
     required this.versionName,
     required this.content,
@@ -31,26 +32,22 @@ class UpdateInfo {
   }
 }
 
-/// 下载链接
+/// 安装包官方与网盘下载地址配置
 class DownloadLinks {
-  /// 网盘链接
   static const Map<String, String> panLinks = {
     '百度网盘': 'https://pan.baidu.com/s/5QyKQdw4AIqxcrHgbiN6gTw',
     '夸克网盘': 'https://pan.quark.cn/s/2907fabc3738',
     '蓝奏云网盘（密码4j0g）': 'https://wwanb.lanzoum.com/b016kfxakh',
   };
 
-  /// 官方链接
-  static String getOfficialUrl(String platform) {
-    return 'https://cdn.grenade-helper.top:8443/download/$platform';
-  }
+  static String getOfficialUrl(String platform) =>
+      'https://cdn.grenade-helper.top:8443/download/$platform';
 }
 
-/// 更新服务
+/// 应用版本检查更新服务
 class UpdateService {
   static const String _baseUrl = 'https://cdn.grenade-helper.top:8443';
 
-  /// 平台标识
   String get currentPlatform {
     if (Platform.isWindows) return 'windows';
     if (Platform.isAndroid) return 'android';
@@ -58,61 +55,48 @@ class UpdateService {
     return 'unknown';
   }
 
-  /// 检查更新
   Future<UpdateInfo?> checkForUpdate() async {
     try {
-      // 获取当前应用版本
-      final packageInfo = await PackageInfo.fromPlatform();
-      final currentVersion = packageInfo.version; // e.g., "1.0.3"
-
-      // 从服务器获取最新版本信息
       final platform = currentPlatform;
       if (platform == 'unknown') return null;
 
+      final packageInfo = await PackageInfo.fromPlatform();
       final response = await http
           .get(Uri.parse('$_baseUrl/update/$platform'))
           .timeout(const Duration(seconds: 10));
-
       if (response.statusCode != 200) return null;
 
-      final json = jsonDecode(response.body);
-      final latestInfo = UpdateInfo.fromJson(json);
-
-      // 比较版本号 (versionName)
-      if (_isNewerVersion(latestInfo.versionName, currentVersion)) {
-        return latestInfo;
-      }
-
-      return null;
+      final latestInfo = UpdateInfo.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>,
+      );
+      return _isNewerVersion(latestInfo.versionName, packageInfo.version)
+          ? latestInfo
+          : null;
     } catch (e) {
-      // 网络错误或解析错误，静默失败
       debugPrint('Update check failed: $e');
       return null;
     }
   }
 
-  /// 比较版本
+  List<int> _parseVersionParts(String version) {
+    final parts = version.split('.').map(int.parse).toList();
+    while (parts.length < 3) {
+      parts.add(0);
+    }
+    return parts;
+  }
+
   bool _isNewerVersion(String latest, String current) {
     try {
-      final latestParts = latest.split('.').map(int.parse).toList();
-      final currentParts = current.split('.').map(int.parse).toList();
-
-      // 补齐长度
-      while (latestParts.length < 3) {
-        latestParts.add(0);
+      final latestParts = _parseVersionParts(latest);
+      final currentParts = _parseVersionParts(current);
+      for (var i = 0; i < 3; i++) {
+        if (latestParts[i] != currentParts[i]) {
+          return latestParts[i] > currentParts[i];
+        }
       }
-      while (currentParts.length < 3) {
-        currentParts.add(0);
-      }
-
-      // 逐段比较
-      for (int i = 0; i < 3; i++) {
-        if (latestParts[i] > currentParts[i]) return true;
-        if (latestParts[i] < currentParts[i]) return false;
-      }
-
-      return false; // 相等
-    } catch (e) {
+      return false;
+    } catch (_) {
       return false;
     }
   }
