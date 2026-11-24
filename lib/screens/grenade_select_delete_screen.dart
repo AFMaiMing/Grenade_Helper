@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:isar_community/isar.dart';
+
 import '../models.dart';
 import '../providers.dart';
 import '../services/data_service.dart';
@@ -8,7 +9,7 @@ import '../widgets/map_icon.dart';
 import '../widgets/selectable_grenade_list_item.dart';
 import 'grenade_detail_screen.dart';
 
-/// 道具批量选择删除页面
+/// 道具批量选择删除页面。
 class GrenadeSelectDeleteScreen extends ConsumerStatefulWidget {
   const GrenadeSelectDeleteScreen({super.key});
 
@@ -131,8 +132,9 @@ class _GrenadeSelectDeleteScreenState
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text('已删除 $deletedCount 个道具'),
-              backgroundColor: Colors.green),
+            content: Text('已删除 $deletedCount 个道具'),
+            backgroundColor: Colors.green,
+          ),
         );
         await _loadGrenades();
       }
@@ -158,6 +160,9 @@ class _GrenadeSelectDeleteScreenState
 
   @override
   Widget build(BuildContext context) {
+    final allSelected =
+        _grenades.isNotEmpty && _selectedIds.length == _grenades.length;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('选择删除道具'),
@@ -166,108 +171,89 @@ class _GrenadeSelectDeleteScreenState
             TextButton.icon(
               onPressed: _selectAll,
               icon: Icon(
-                _selectedIds.length == _grenades.length
-                    ? Icons.deselect
-                    : Icons.select_all,
+                allSelected ? Icons.deselect : Icons.select_all,
                 size: 20,
               ),
-              label:
-                  Text(_selectedIds.length == _grenades.length ? '取消全选' : '全选'),
+              label: Text(allSelected ? '取消全选' : '全选'),
             ),
         ],
       ),
       body: Column(
         children: [
-          // 地图选择
-          Container(
-            padding: const EdgeInsets.all(16),
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            child: DropdownButtonFormField<GameMap>(
-              decoration: const InputDecoration(
-                labelText: '选择地图',
-                border: OutlineInputBorder(),
-                contentPadding:
-                    EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              ),
-              initialValue: _selectedMap,
-              items: _maps.map((map) {
-                return DropdownMenuItem(
-                  value: map,
-                  child: _DeleteMapDropdownLabel(
-                    iconPath: map.iconPath,
-                    text: map.name,
-                  ),
-                );
-              }).toList(),
-              onChanged: (value) {
-                setState(() => _selectedMap = value);
-                _loadGrenades();
-              },
-            ),
-          ),
-          // 内容
+          _buildMapSelector(context),
           Expanded(child: _buildContent()),
         ],
       ),
-      bottomNavigationBar: _selectedIds.isNotEmpty
-          ? Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surface,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.1),
-                    blurRadius: 4,
-                    offset: const Offset(0, -2),
-                  ),
-                ],
-              ),
-              child: SafeArea(
-                child: ElevatedButton.icon(
-                  onPressed: _deleteSelected,
-                  icon: const Icon(Icons.delete),
-                  label: Text('删除选中 (${_selectedIds.length})'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.red,
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size(double.infinity, 48),
-                  ),
-                ),
-              ),
-            )
-          : null,
+      bottomNavigationBar:
+          _selectedIds.isNotEmpty ? _buildDeleteBottomBar(context) : null,
+    );
+  }
+
+  Widget _buildMapSelector(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: DropdownButtonFormField<GameMap>(
+        decoration: const InputDecoration(
+          labelText: '选择地图',
+          border: OutlineInputBorder(),
+          contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        ),
+        initialValue: _selectedMap,
+        items: _maps.map((map) {
+          return DropdownMenuItem(
+            value: map,
+            child: _DeleteMapDropdownLabel(
+              iconPath: map.iconPath,
+              text: map.name,
+            ),
+          );
+        }).toList(),
+        onChanged: (value) {
+          setState(() => _selectedMap = value);
+          _loadGrenades();
+        },
+      ),
+    );
+  }
+
+  Widget _buildDeleteBottomBar(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.1),
+            blurRadius: 4,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        child: ElevatedButton.icon(
+          onPressed: _deleteSelected,
+          icon: const Icon(Icons.delete),
+          label: Text('删除选中 (${_selectedIds.length})'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.red,
+            foregroundColor: Colors.white,
+            minimumSize: const Size(double.infinity, 48),
+          ),
+        ),
+      ),
     );
   }
 
   Widget _buildContent() {
     if (_selectedMap == null) {
-      return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.map, size: 64, color: Colors.grey),
-            SizedBox(height: 16),
-            Text('请先选择一个地图', style: TextStyle(color: Colors.grey)),
-          ],
-        ),
-      );
+      return _buildEmptyState(Icons.map, '请先选择一个地图');
     }
-
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
-
     if (_grenades.isEmpty) {
-      return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.inbox, size: 64, color: Colors.grey),
-            SizedBox(height: 16),
-            Text('该地图暂无道具', style: TextStyle(color: Colors.grey)),
-          ],
-        ),
-      );
+      return _buildEmptyState(Icons.inbox, '该地图暂无道具');
     }
 
     return ListView.builder(
@@ -275,20 +261,28 @@ class _GrenadeSelectDeleteScreenState
       itemCount: _grenades.length,
       itemBuilder: (context, index) {
         final grenade = _grenades[index];
-        final isSelected = _selectedIds.contains(grenade.id);
-        return _buildGrenadeItem(grenade, isSelected);
+        return SelectableGrenadeListItem(
+          grenade: grenade,
+          selected: _selectedIds.contains(grenade.id),
+          accentColor: Colors.red,
+          onChanged: (_) => _toggleSelection(grenade.id),
+          onTap: () => _toggleSelection(grenade.id),
+          onPreview: () => _previewGrenade(grenade),
+        );
       },
     );
   }
 
-  Widget _buildGrenadeItem(Grenade grenade, bool isSelected) {
-    return SelectableGrenadeListItem(
-      grenade: grenade,
-      selected: isSelected,
-      accentColor: Colors.red,
-      onChanged: (_) => _toggleSelection(grenade.id),
-      onTap: () => _toggleSelection(grenade.id),
-      onPreview: () => _previewGrenade(grenade),
+  Widget _buildEmptyState(IconData icon, String message) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 64, color: Colors.grey),
+          const SizedBox(height: 16),
+          Text(message, style: const TextStyle(color: Colors.grey)),
+        ],
+      ),
     );
   }
 }

@@ -1,11 +1,13 @@
-import 'dart:typed_data';
 import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+
 import '../models.dart';
 import '../services/data_service.dart';
 import '../widgets/grenade_type_icon.dart';
 
-/// 道具预览
+/// 道具导入预览页面。
 class GrenadePreviewScreen extends StatelessWidget {
   final GrenadePreviewItem grenade;
   final Map<String, List<int>> memoryImages;
@@ -24,8 +26,7 @@ class GrenadePreviewScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final rawData = grenade.rawData;
-    final steps = (rawData['steps'] as List?) ?? [];
+    final steps = (grenade.rawData['steps'] as List?) ?? [];
 
     return Scaffold(
       appBar: AppBar(
@@ -37,9 +38,7 @@ class GrenadePreviewScreen extends StatelessWidget {
       ),
       body: Column(
         children: [
-          // 顶栏
           _buildInfoBar(context),
-          // 步骤
           Expanded(
             child: steps.isEmpty
                 ? const Center(
@@ -52,7 +51,6 @@ class GrenadePreviewScreen extends StatelessWidget {
                         _buildStepCard(context, steps[index], index),
                   ),
           ),
-          // 底栏
           _buildFooter(context),
         ],
       ),
@@ -60,8 +58,6 @@ class GrenadePreviewScreen extends StatelessWidget {
   }
 
   Widget _buildInfoBar(BuildContext context) {
-    final typeName = _getTypeName(grenade.type);
-
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       color: Theme.of(context).colorScheme.surfaceContainerHighest,
@@ -69,7 +65,10 @@ class GrenadePreviewScreen extends StatelessWidget {
         children: [
           GrenadeTypeIcon(type: grenade.type, size: 26),
           const SizedBox(width: 8),
-          Text(typeName, style: const TextStyle(fontWeight: FontWeight.bold)),
+          Text(
+            _getTypeName(grenade.type),
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
           const Spacer(),
           Icon(Icons.map, size: 16, color: Colors.grey[600]),
           const SizedBox(width: 4),
@@ -95,7 +94,6 @@ class GrenadePreviewScreen extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 标题
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
             child: Row(
@@ -134,7 +132,6 @@ class GrenadePreviewScreen extends StatelessWidget {
               ],
             ),
           ),
-          // 描述
           if (description.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
@@ -143,44 +140,28 @@ class GrenadePreviewScreen extends StatelessWidget {
                 style: TextStyle(fontSize: 14, color: Colors.grey[400]),
               ),
             ),
-          // 媒体
-          ...medias.map((media) => _buildMediaItem(context, media)),
+          ...medias.map(_buildMediaItem),
           const SizedBox(height: 8),
         ],
       ),
     );
   }
 
-  Widget _buildMediaItem(BuildContext context, dynamic mediaData) {
+  Widget _buildMediaItem(dynamic mediaData) {
     final path = mediaData['path'] as String? ?? '';
     final type = mediaData['type'] as int? ?? 0;
-
-    // 内存图片
     final imageBytes = memoryImages[path];
 
     if (imageBytes == null) {
       if (type != MediaType.video && path.isNotEmpty) {
         final file = File(path);
         if (file.existsSync()) {
-          return Container(
-            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: Image.file(
-                file,
-                fit: BoxFit.contain,
-                width: double.infinity,
-                errorBuilder: (context, error, stackTrace) {
-                  return Container(
-                    height: 200,
-                    color: Colors.grey[800],
-                    child: const Center(
-                      child: Icon(Icons.broken_image,
-                          size: 48, color: Colors.grey),
-                    ),
-                  );
-                },
-              ),
+          return _buildImageContainer(
+            Image.file(
+              file,
+              fit: BoxFit.contain,
+              width: double.infinity,
+              errorBuilder: _buildBrokenImageError,
             ),
           );
         }
@@ -195,126 +176,111 @@ class GrenadePreviewScreen extends StatelessWidget {
             builder: (context, snapshot) {
               final packageImageBytes = snapshot.data;
               if (packageImageBytes != null && packageImageBytes.isNotEmpty) {
-                return Container(
-                  margin:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.memory(
-                      Uint8List.fromList(packageImageBytes),
-                      fit: BoxFit.contain,
-                      width: double.infinity,
-                      errorBuilder: (context, error, stackTrace) {
-                        return Container(
-                          height: 200,
-                          color: Colors.grey[800],
-                          child: const Center(
-                            child: Icon(Icons.broken_image,
-                                size: 48, color: Colors.grey),
-                          ),
-                        );
-                      },
-                    ),
+                return _buildImageContainer(
+                  Image.memory(
+                    Uint8List.fromList(packageImageBytes),
+                    fit: BoxFit.contain,
+                    width: double.infinity,
+                    errorBuilder: _buildBrokenImageError,
                   ),
                 );
               }
               if (snapshot.connectionState == ConnectionState.waiting) {
-                return Container(
-                  height: 200,
-                  margin:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[850],
-                    borderRadius: BorderRadius.circular(8),
-                  ),
+                return _buildMediaBox(
+                  backgroundColor: Colors.grey[850],
                   child: const Center(child: CircularProgressIndicator()),
                 );
               }
-              return Container(
-                height: 200,
-                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                decoration: BoxDecoration(
-                  color: Colors.grey[800],
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.image_not_supported,
-                          size: 48, color: Colors.grey),
-                      SizedBox(height: 8),
-                      Text("无法加载媒体", style: TextStyle(color: Colors.grey)),
-                    ],
-                  ),
-                ),
-              );
+              return _buildUnavailableMediaPlaceholder();
             },
           );
         }
       }
-      return Container(
-        height: 200,
-        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        decoration: BoxDecoration(
-          color: Colors.grey[800],
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: const Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.image_not_supported, size: 48, color: Colors.grey),
-              SizedBox(height: 8),
-              Text("无法加载媒体", style: TextStyle(color: Colors.grey)),
-            ],
-          ),
-        ),
-      );
+      return _buildUnavailableMediaPlaceholder();
     }
 
     if (type == MediaType.video) {
-      // 视频占位
-      return Container(
-        height: 200,
-        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        decoration: BoxDecoration(
-          color: Colors.grey[800],
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: const Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.videocam, size: 48, color: Colors.orange),
-              SizedBox(height: 8),
-              Text("视频预览（导入后可播放）", style: TextStyle(color: Colors.grey)),
-            ],
-          ),
-        ),
+      return _buildMediaPlaceholder(
+        icon: Icons.videocam,
+        iconColor: Colors.orange,
+        text: "视频预览（导入后可播放）",
       );
     }
 
-    // 图片
+    return _buildImageContainer(
+      Image.memory(
+        Uint8List.fromList(imageBytes),
+        fit: BoxFit.contain,
+        width: double.infinity,
+        errorBuilder: _buildBrokenImageError,
+      ),
+    );
+  }
+
+  Widget _buildImageContainer(Widget image) {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(8),
-        child: Image.memory(
-          Uint8List.fromList(imageBytes),
-          fit: BoxFit.contain,
-          width: double.infinity,
-          errorBuilder: (context, error, stackTrace) {
-            return Container(
-              height: 200,
-              color: Colors.grey[800],
-              child: const Center(
-                child: Icon(Icons.broken_image, size: 48, color: Colors.grey),
-              ),
-            );
-          },
+        child: image,
+      ),
+    );
+  }
+
+  Widget _buildBrokenImageError(
+    BuildContext context,
+    Object error,
+    StackTrace? stackTrace,
+  ) {
+    return Container(
+      height: 200,
+      color: Colors.grey[800],
+      child: const Center(
+        child: Icon(Icons.broken_image, size: 48, color: Colors.grey),
+      ),
+    );
+  }
+
+  Widget _buildUnavailableMediaPlaceholder() {
+    return _buildMediaPlaceholder(
+      icon: Icons.image_not_supported,
+      iconColor: Colors.grey,
+      text: "无法加载媒体",
+    );
+  }
+
+  Widget _buildMediaPlaceholder({
+    required IconData icon,
+    required Color iconColor,
+    required String text,
+  }) {
+    return _buildMediaBox(
+      backgroundColor: Colors.grey[800],
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 48, color: iconColor),
+            const SizedBox(height: 8),
+            Text(text, style: const TextStyle(color: Colors.grey)),
+          ],
         ),
       ),
+    );
+  }
+
+  Widget _buildMediaBox({
+    required Color? backgroundColor,
+    required Widget child,
+  }) {
+    return Container(
+      height: 200,
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: child,
     );
   }
 
@@ -346,22 +312,11 @@ class GrenadePreviewScreen extends StatelessWidget {
   }
 
   Widget _buildStatusBadge(ImportStatus status) {
-    Color color;
-    String text;
-    switch (status) {
-      case ImportStatus.newItem:
-        color = Colors.green;
-        text = "新增";
-        break;
-      case ImportStatus.update:
-        color = Colors.orange;
-        text = "更新";
-        break;
-      case ImportStatus.skip:
-        color = Colors.grey;
-        text = "跳过";
-        break;
-    }
+    final (color, text) = switch (status) {
+      ImportStatus.newItem => (Colors.green, "新增"),
+      ImportStatus.update => (Colors.orange, "更新"),
+      ImportStatus.skip => (Colors.grey, "跳过"),
+    };
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -374,19 +329,13 @@ class GrenadePreviewScreen extends StatelessWidget {
   }
 
   String _getTypeName(int type) {
-    switch (type) {
-      case GrenadeType.smoke:
-        return "烟雾弹";
-      case GrenadeType.flash:
-        return "闪光弹";
-      case GrenadeType.molotov:
-        return "燃烧弹";
-      case GrenadeType.he:
-        return "手雷";
-      case GrenadeType.wallbang:
-        return "穿点";
-      default:
-        return "未知";
-    }
+    return switch (type) {
+      GrenadeType.smoke => "烟雾弹",
+      GrenadeType.flash => "闪光弹",
+      GrenadeType.molotov => "燃烧弹",
+      GrenadeType.he => "手雷",
+      GrenadeType.wallbang => "穿点",
+      _ => "未知",
+    };
   }
 }
