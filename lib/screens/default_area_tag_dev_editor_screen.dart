@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:isar_community/isar.dart';
+
 import '../models.dart';
 import '../models/map_area.dart';
 import '../models/tag.dart';
@@ -12,7 +13,7 @@ import '../services/tag_service.dart';
 import 'area_auto_tag_preview_screen.dart';
 import 'area_draw_screen.dart';
 
-/// 默认区域标签开发者编辑器（仅 Debug 入口可见）
+/// 默认区域标签开发者编辑器（仅 Debug 入口可见）。
 class DefaultAreaTagDevEditorScreen extends ConsumerStatefulWidget {
   final GameMap gameMap;
 
@@ -36,9 +37,7 @@ class _DefaultAreaTagDevEditorScreenState
     _loadData();
   }
 
-  String _indexKey(int tagId, int layerId) => '$tagId:$layerId';
-
-  bool _isAreaNewer(MapArea a, MapArea b) {
+  static bool _isAreaNewer(MapArea a, MapArea b) {
     if (a.updatedAt.isAfter(b.updatedAt)) return true;
     if (a.updatedAt.isBefore(b.updatedAt)) return false;
     if (a.createdAt.isAfter(b.createdAt)) return true;
@@ -57,7 +56,7 @@ class _DefaultAreaTagDevEditorScreenState
       final layerId = area.layerId;
       if (!defaultTagIds.contains(area.tagId) || layerId == null) continue;
 
-      final key = _indexKey(area.tagId, layerId);
+      final key = '${area.tagId}:$layerId';
       final previous = deduped[key];
       if (previous == null) {
         deduped[key] = area;
@@ -73,8 +72,7 @@ class _DefaultAreaTagDevEditorScreenState
     }
 
     if (obsolete.isNotEmpty) {
-      final isar = ref.read(isarProvider);
-      final areaService = AreaService(isar);
+      final areaService = AreaService(ref.read(isarProvider));
       for (final area in obsolete) {
         await areaService.deleteArea(area, deleteTag: false);
       }
@@ -84,7 +82,7 @@ class _DefaultAreaTagDevEditorScreenState
   }
 
   Future<void> _loadData() async {
-    setState(() => _loading = true);
+    if (mounted) setState(() => _loading = true);
     final isar = ref.read(isarProvider);
     final tagService = TagService(isar);
     final areaService = AreaService(isar);
@@ -103,10 +101,9 @@ class _DefaultAreaTagDevEditorScreenState
         .findAll();
 
     final allAreas = await areaService.getAreas(widget.gameMap.id);
-    final defaultTagIds = tags.map((t) => t.id).toSet();
     final areas = await _dedupeAndCleanupDefaultAreas(
       areas: allAreas,
-      defaultTagIds: defaultTagIds,
+      defaultTagIds: tags.map((t) => t.id).toSet(),
     );
 
     widget.gameMap.layers.loadSync();
@@ -115,8 +112,7 @@ class _DefaultAreaTagDevEditorScreenState
 
     final areasByTagId = <int, List<MapArea>>{};
     for (final area in areas) {
-      final layerId = area.layerId;
-      if (layerId == null) continue;
+      if (area.layerId == null) continue;
       areasByTagId.putIfAbsent(area.tagId, () => []).add(area);
     }
 
@@ -145,20 +141,20 @@ class _DefaultAreaTagDevEditorScreenState
     return sorted;
   }
 
-  int _configuredLayerCount(int tagId) => _getAreasForTag(tagId).length;
-
-  String _layerNameById(int? layerId) {
-    if (layerId == null) return '未知楼层';
+  MapLayer? _findLayerById(int? layerId) {
+    if (layerId == null) return null;
     for (final l in _layers) {
-      if (l.id == layerId) return l.name;
+      if (l.id == layerId) return l;
     }
-    return '未知楼层';
+    return null;
   }
+
+  String _layerNameById(int? layerId) =>
+      _findLayerById(layerId)?.name ?? '未知楼层';
 
   MapArea? _findPrimaryAreaForTag(int tagId) {
     final areas = _getAreasForTag(tagId);
-    if (areas.isEmpty) return null;
-    return areas.first;
+    return areas.isEmpty ? null : areas.first;
   }
 
   Future<MapArea?> _pickAreaForTagAction(Tag tag, String title) async {
@@ -199,12 +195,7 @@ class _DefaultAreaTagDevEditorScreenState
 
   Future<void> _openDrawForTag(Tag tag) async {
     final existingArea = _findPrimaryAreaForTag(tag.id);
-    final layer = (existingArea != null && existingArea.layerId != null)
-        ? _layers.firstWhere(
-            (l) => l.id == existingArea.layerId,
-            orElse: () => _layers.first,
-          )
-        : _layers.first;
+    final layer = _findLayerById(existingArea?.layerId) ?? _layers.first;
 
     if (!mounted) return;
     final result = await Navigator.push<bool>(
@@ -220,22 +211,20 @@ class _DefaultAreaTagDevEditorScreenState
         ),
       ),
     );
-    if (result == true) {
-      _loadData();
-    }
+    if (result == true) _loadData();
   }
 
   Future<void> _deleteAreaForTag(Tag tag) async {
     final target = await _pickAreaForTagAction(tag, '选择要删除的楼层区域');
-    if (target == null) return;
-    if (!mounted) return;
+    if (target == null || !mounted) return;
 
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('删除区域数据'),
         content: Text(
-            '确认删除「${tag.name}」在「${_layerNameById(target.layerId)}」的区域几何数据？'),
+          '确认删除「${tag.name}」在「${_layerNameById(target.layerId)}」的区域几何数据？',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -251,9 +240,8 @@ class _DefaultAreaTagDevEditorScreenState
     );
     if (confirm != true) return;
 
-    final isar = ref.read(isarProvider);
-    final areaService = AreaService(isar);
-    await areaService.deleteArea(target, deleteTag: false);
+    await AreaService(ref.read(isarProvider))
+        .deleteArea(target, deleteTag: false);
     _loadData();
   }
 
@@ -273,14 +261,18 @@ class _DefaultAreaTagDevEditorScreenState
 
   Future<void> _exportCurrentMap() async {
     final isar = ref.read(isarProvider);
-    final exportService = const DefaultAreaExportService();
+    const exportService = DefaultAreaExportService();
     final code = await exportService.exportCurrentMapDefaultAreaPresets(
       map: widget.gameMap,
       isar: isar,
     );
 
     if (!mounted) return;
-    await showDialog<void>(
+    await _showExportCodeDialog(code);
+  }
+
+  Future<void> _showExportCodeDialog(String code) {
+    return showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('导出当前地图默认区域常量'),
@@ -319,24 +311,73 @@ class _DefaultAreaTagDevEditorScreenState
     );
   }
 
+  Widget _buildStatusScaffold(Widget body) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('默认区域开发编辑器')),
+      body: Center(child: body),
+    );
+  }
+
+  Widget _buildTagAreaCard(Tag tag) {
+    final area = _findPrimaryAreaForTag(tag.id);
+    final done = _getAreasForTag(tag.id).isNotEmpty;
+    final color = Color(tag.colorValue);
+
+    return Card(
+      child: ListTile(
+        leading: Container(
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.2),
+            shape: BoxShape.circle,
+            border: Border.all(color: color),
+          ),
+        ),
+        title: Text(tag.name),
+        subtitle: Text(
+          done ? '已配置楼层：${_layerNameById(area?.layerId)}' : '未配置区域数据',
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (area != null)
+              IconButton(
+                tooltip: '可视化自动添加该区域标签',
+                onPressed: () => _openAreaAutoTag(area),
+                icon: const Icon(Icons.auto_awesome, color: Colors.greenAccent),
+              ),
+            IconButton(
+              tooltip: done ? '编辑区域数据' : '新建区域数据',
+              onPressed: () => _openDrawForTag(tag),
+              icon: Icon(
+                done ? Icons.edit : Icons.add,
+                color: done ? Colors.blueAccent : Colors.lightGreenAccent,
+              ),
+            ),
+            if (done)
+              IconButton(
+                tooltip: '删除区域几何',
+                onPressed: () => _deleteAreaForTag(tag),
+                icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('默认区域开发编辑器')),
-        body: const Center(child: CircularProgressIndicator()),
-      );
+      return _buildStatusScaffold(const CircularProgressIndicator());
     }
-
     if (_layers.isEmpty) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('默认区域开发编辑器')),
-        body: const Center(child: Text('当前地图没有楼层数据，无法编辑')),
-      );
+      return _buildStatusScaffold(const Text('当前地图没有楼层数据，无法编辑'));
     }
 
     final completedCount = _defaultAreaTags
-        .where((tag) => _configuredLayerCount(tag.id) > 0)
+        .where((tag) => _getAreasForTag(tag.id).isNotEmpty)
         .length;
 
     return Scaffold(
@@ -369,59 +410,8 @@ class _DefaultAreaTagDevEditorScreenState
                 : ListView.builder(
                     padding: const EdgeInsets.all(12),
                     itemCount: _defaultAreaTags.length,
-                    itemBuilder: (ctx, index) {
-                      final tag = _defaultAreaTags[index];
-                      final area = _findPrimaryAreaForTag(tag.id);
-                      final layerCount = _configuredLayerCount(tag.id);
-                      final done = layerCount > 0;
-                      final color = Color(tag.colorValue);
-                      return Card(
-                        child: ListTile(
-                          leading: Container(
-                            width: 32,
-                            height: 32,
-                            decoration: BoxDecoration(
-                              color: color.withValues(alpha: 0.2),
-                              shape: BoxShape.circle,
-                              border: Border.all(color: color),
-                            ),
-                          ),
-                          title: Text(tag.name),
-                          subtitle: Text(done
-                              ? '已配置楼层：${_layerNameById(area?.layerId)}'
-                              : '未配置区域数据'),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (area != null)
-                                IconButton(
-                                  tooltip: '可视化自动添加该区域标签',
-                                  onPressed: () => _openAreaAutoTag(area),
-                                  icon: const Icon(Icons.auto_awesome,
-                                      color: Colors.greenAccent),
-                                ),
-                              IconButton(
-                                tooltip: done ? '编辑区域数据' : '新建区域数据',
-                                onPressed: () => _openDrawForTag(tag),
-                                icon: Icon(
-                                  done ? Icons.edit : Icons.add,
-                                  color: done
-                                      ? Colors.blueAccent
-                                      : Colors.lightGreenAccent,
-                                ),
-                              ),
-                              if (done)
-                                IconButton(
-                                  tooltip: '删除区域几何',
-                                  onPressed: () => _deleteAreaForTag(tag),
-                                  icon: const Icon(Icons.delete_outline,
-                                      color: Colors.redAccent),
-                                ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
+                    itemBuilder: (_, index) =>
+                        _buildTagAreaCard(_defaultAreaTags[index]),
                   ),
           ),
         ],

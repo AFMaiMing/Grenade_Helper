@@ -1,14 +1,15 @@
 import 'dart:convert';
-import 'dart:math' as math;
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:photo_view/photo_view.dart';
+
 import '../models.dart';
 import '../providers.dart';
-import '../widgets/app_svg_icon.dart';
 import '../widgets/path_image_provider.dart';
-import '../widgets/square_brush.dart';
+import 'impact_picker/impact_picker_painters.dart';
+import 'impact_picker/impact_picker_widgets.dart';
 
 /// 爆点坐标选择/查看页面
 class ImpactPointPickerScreen extends ConsumerStatefulWidget {
@@ -100,32 +101,6 @@ class _ImpactPointPickerScreenState
     if (mounted) setState(() {});
   }
 
-  ({double width, double height, double offsetX, double offsetY})
-      _getImageBounds(double containerWidth, double containerHeight) {
-    const double imageAspectRatio = 1.0;
-    final double containerAspectRatio = containerWidth / containerHeight;
-
-    if (containerAspectRatio > imageAspectRatio) {
-      final imageHeight = containerHeight;
-      final imageWidth = containerHeight * imageAspectRatio;
-      return (
-        width: imageWidth,
-        height: imageHeight,
-        offsetX: (containerWidth - imageWidth) / 2,
-        offsetY: 0.0,
-      );
-    } else {
-      final imageWidth = containerWidth;
-      final imageHeight = containerWidth / imageAspectRatio;
-      return (
-        width: imageWidth,
-        height: imageHeight,
-        offsetX: 0.0,
-        offsetY: (containerHeight - imageHeight) / 2,
-      );
-    }
-  }
-
   Offset? _getLocalPosition(Offset globalPosition) {
     final RenderBox? box =
         _stackKey.currentContext?.findRenderObject() as RenderBox?;
@@ -133,11 +108,9 @@ class _ImpactPointPickerScreenState
 
     final localPosition = box.globalToLocal(globalPosition);
     final size = box.size;
-    final bounds = _getImageBounds(size.width, size.height);
-
+    final bounds = computePickerImageBounds(size.width, size.height);
     final tapX = localPosition.dx - bounds.offsetX;
     final tapY = localPosition.dy - bounds.offsetY;
-
     return Offset(tapX / bounds.width, tapY / bounds.height);
   }
 
@@ -172,8 +145,7 @@ class _ImpactPointPickerScreenState
     }
   }
 
-  void _handleMouseWheelZoom(
-      PointerScrollEvent event, BoxConstraints constraints) {
+  void _handleMouseWheelZoom(PointerScrollEvent event) {
     final RenderBox? renderBox = context.findRenderObject() as RenderBox?;
     if (renderBox == null) return;
 
@@ -191,10 +163,8 @@ class _ImpactPointPickerScreenState
 
     if ((newScale - currentScale).abs() < 0.0001) return;
 
-    final Size size = renderBox.size;
-    final Offset viewportCenter = size.center(Offset.zero);
+    final Offset viewportCenter = renderBox.size.center(Offset.zero);
     final Offset cursorPosition = event.localPosition - viewportCenter;
-
     final double scaleRatio = newScale / currentScale;
     final Offset newPosition =
         cursorPosition * (1 - scaleRatio) + currentPosition * scaleRatio;
@@ -211,6 +181,13 @@ class _ImpactPointPickerScreenState
       default:
         return Colors.white;
     }
+  }
+
+  String _resolveAppBarTitle() {
+    if (widget.wallbangLineMode) {
+      return widget.readOnly ? '查看穿线方位' : '设置穿线方位';
+    }
+    return widget.readOnly ? '查看爆点位置' : '选择$_targetName位置';
   }
 
   @override
@@ -231,9 +208,7 @@ class _ImpactPointPickerScreenState
           icon: const Icon(Icons.close),
           onPressed: () => Navigator.pop(context),
         ),
-        title: Text(widget.wallbangLineMode
-            ? (widget.readOnly ? '查看穿线方位' : '设置穿线方位')
-            : (widget.readOnly ? '查看爆点位置' : '选择$_targetName位置')),
+        title: Text(_resolveAppBarTitle()),
         centerTitle: true,
         actions: [
           if (!widget.readOnly)
@@ -255,13 +230,13 @@ class _ImpactPointPickerScreenState
             child: ClipRect(
               child: LayoutBuilder(
                 builder: (context, constraints) {
-                  final imageBounds = _getImageBounds(
+                  final imageBounds = computePickerImageBounds(
                       constraints.maxWidth, constraints.maxHeight);
 
                   return Listener(
                     onPointerSignal: (event) {
                       if (event is PointerScrollEvent) {
-                        _handleMouseWheelZoom(event, constraints);
+                        _handleMouseWheelZoom(event);
                       }
                     },
                     child: PhotoView.customChild(
@@ -282,23 +257,7 @@ class _ImpactPointPickerScreenState
                             children: [
                               GestureDetector(
                                 onTapUp: widget.readOnly ? null : _handleTap,
-                                child: Builder(builder: (context) {
-                                  final provider =
-                                      imageProviderFromPath(_layer!.assetPath);
-                                  if (provider == null) {
-                                    return Container(
-                                      width: constraints.maxWidth,
-                                      height: constraints.maxHeight,
-                                      color: Colors.black,
-                                    );
-                                  }
-                                  return Image(
-                                    image: provider,
-                                    width: constraints.maxWidth,
-                                    height: constraints.maxHeight,
-                                    fit: BoxFit.contain,
-                                  );
-                                }),
+                                child: _buildLayerImage(constraints),
                               ),
                               ..._buildPickerLayers(imageBounds, markerScale),
                             ],
@@ -311,17 +270,38 @@ class _ImpactPointPickerScreenState
               ),
             ),
           ),
-          if (!widget.readOnly) _buildPickerFooter(),
+          if (!widget.readOnly)
+            ImpactPickerFooter(
+              wallbangLineMode: widget.wallbangLineMode,
+              hasSelection: _selectedX != null,
+              targetName: _targetName,
+            ),
         ],
       ),
     );
   }
 
+  Widget _buildLayerImage(BoxConstraints constraints) {
+    final provider = imageProviderFromPath(_layer!.assetPath);
+    if (provider == null) {
+      return Container(
+        width: constraints.maxWidth,
+        height: constraints.maxHeight,
+        color: Colors.black,
+      );
+    }
+    return Image(
+      image: provider,
+      width: constraints.maxWidth,
+      height: constraints.maxHeight,
+      fit: BoxFit.contain,
+    );
+  }
+
   List<Widget> _buildPickerLayers(
-    ({double width, double height, double offsetX, double offsetY}) imageBounds,
+    PickerImageBounds imageBounds,
     double markerScale,
   ) {
-    final color = _getTypeColor();
     final selected = _selectedX != null && _selectedY != null
         ? Offset(_selectedX!, _selectedY!)
         : null;
@@ -330,20 +310,28 @@ class _ImpactPointPickerScreenState
 
     return [
       if (throwPoint != null)
-        _buildThrowPointMarker(imageBounds, markerScale, throwPoint),
+        ImpactPointMarker.throwPoint(
+          imageBounds: imageBounds,
+          markerScale: markerScale,
+          point: throwPoint,
+        ),
       if (throwPoint != null && impactPoint != null)
         _buildConnectionLine(imageBounds, throwPoint, impactPoint),
       if (!widget.wallbangLineMode && impactPoint != null)
-        _buildImpactMarker(imageBounds, markerScale, impactPoint),
+        ImpactPointMarker.impact(
+          imageBounds: imageBounds,
+          markerScale: markerScale,
+          point: impactPoint,
+        ),
       if (!widget.wallbangLineMode &&
           widget.readOnly &&
           _drawingStrokes.isNotEmpty)
         Positioned.fill(
           child: IgnorePointer(
             child: CustomPaint(
-              painter: _ImpactAreaPainter(
+              painter: ImpactAreaPainter(
                 strokes: _drawingStrokes,
-                color: color,
+                color: _getTypeColor(),
                 imageBounds: imageBounds,
                 opacity: 0.6,
               ),
@@ -353,198 +341,11 @@ class _ImpactPointPickerScreenState
     ];
   }
 
-  Widget _buildPickerFooter() {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final bgColor = colorScheme.surfaceContainerHighest;
-    final textColor = colorScheme.onSurfaceVariant;
-    final markerColor = colorScheme.onSurface;
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      color: bgColor,
-      child: Column(
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 12,
-                height: 12,
-                decoration: widget.wallbangLineMode
-                    ? BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: markerColor.withValues(alpha: 0.5),
-                          width: 1.5,
-                        ),
-                      )
-                    : BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(color: markerColor, width: 2),
-                      ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                widget.wallbangLineMode ? '穿点' : '投掷点',
-                style: TextStyle(color: textColor, fontSize: 12),
-              ),
-              const SizedBox(width: 24),
-              if (widget.wallbangLineMode) ...[
-                const Icon(Icons.north_east_rounded,
-                    size: 16, color: Colors.cyan),
-                const SizedBox(width: 6),
-                Text(
-                  '穿线方向',
-                  style: TextStyle(color: textColor, fontSize: 12),
-                ),
-              ] else ...[
-                Container(
-                  width: 12,
-                  height: 12,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.purpleAccent, width: 2),
-                  ),
-                  child: const Icon(Icons.close,
-                      size: 8, color: Colors.purpleAccent),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  '爆点',
-                  style: TextStyle(color: textColor, fontSize: 12),
-                ),
-              ],
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              if (_selectedX == null) ...[
-                AppSvgIcon(
-                  asset: 'assets/icons/ui_hint.svg',
-                  size: 17,
-                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
-                  semanticsLabel: '提示',
-                ),
-                const SizedBox(width: 7),
-              ],
-              Flexible(
-                child: Text(
-                  _selectedX != null
-                      ? '已选择$_targetName，点击确认保存'
-                      : '点击地图任意位置设置$_targetName',
-                  style: TextStyle(
-                    color: _selectedX != null
-                        ? theme.colorScheme.primary
-                        : colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
-                    fontSize: 13,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildThrowPointMarker(
-      ({
-        double width,
-        double height,
-        double offsetX,
-        double offsetY
-      }) imageBounds,
-      double markerScale,
-      Offset point) {
-    const double baseHalfSize = 10.0;
-    final left =
-        imageBounds.offsetX + point.dx * imageBounds.width - baseHalfSize;
-    final top =
-        imageBounds.offsetY + point.dy * imageBounds.height - baseHalfSize;
-
-    return Positioned(
-      left: left,
-      top: top,
-      child: Transform.scale(
-        scale: markerScale,
-        alignment: Alignment.center,
-        child: Container(
-          width: 20,
-          height: 20,
-          decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.5),
-            shape: BoxShape.circle,
-            border: Border.all(color: Colors.white, width: 2),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.white.withValues(alpha: 0.3),
-                blurRadius: 4,
-                spreadRadius: 1,
-              ),
-            ],
-          ),
-          child: const Icon(Icons.place, size: 12, color: Colors.white),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildImpactMarker(
-      ({
-        double width,
-        double height,
-        double offsetX,
-        double offsetY
-      }) imageBounds,
-      double markerScale,
-      Offset point) {
-    const double baseHalfSize = 10.0;
-    final left =
-        imageBounds.offsetX + point.dx * imageBounds.width - baseHalfSize;
-    final top =
-        imageBounds.offsetY + point.dy * imageBounds.height - baseHalfSize;
-
-    return Positioned(
-      left: left,
-      top: top,
-      child: Transform.scale(
-        scale: markerScale,
-        alignment: Alignment.center,
-        child: Container(
-          width: 20,
-          height: 20,
-          decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.5),
-            shape: BoxShape.circle,
-            border: Border.all(color: Colors.purpleAccent, width: 2),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.purpleAccent.withValues(alpha: 0.4),
-                blurRadius: 6,
-                spreadRadius: 2,
-              ),
-            ],
-          ),
-          child: const Icon(Icons.close, size: 12, color: Colors.purpleAccent),
-        ),
-      ),
-    );
-  }
-
   Widget _buildConnectionLine(
-      ({
-        double width,
-        double height,
-        double offsetX,
-        double offsetY
-      }) imageBounds,
-      Offset from,
-      Offset to) {
+    PickerImageBounds imageBounds,
+    Offset from,
+    Offset to,
+  ) {
     final startX = imageBounds.offsetX + from.dx * imageBounds.width;
     final startY = imageBounds.offsetY + from.dy * imageBounds.height;
     final endX = imageBounds.offsetX + to.dx * imageBounds.width;
@@ -554,7 +355,7 @@ class _ImpactPointPickerScreenState
     return Positioned.fill(
       child: IgnorePointer(
         child: CustomPaint(
-          painter: _DashedLinePainter(
+          painter: DashedLinePainter(
             start: Offset(startX, startY),
             end: Offset(endX, endY),
             color: isWallbang
@@ -569,219 +370,5 @@ class _ImpactPointPickerScreenState
         ),
       ),
     );
-  }
-}
-
-class _ImpactAreaPainter extends CustomPainter {
-  final List<Map<String, dynamic>> strokes;
-  final Color color;
-  final double opacity;
-  final ({
-    double width,
-    double height,
-    double offsetX,
-    double offsetY
-  }) imageBounds;
-
-  _ImpactAreaPainter({
-    required this.strokes,
-    required this.color,
-    required this.imageBounds,
-    required this.opacity,
-  });
-
-  List<Offset> _extractPoints(dynamic rawPoints) {
-    if (rawPoints is! List) return const [];
-    final points = <Offset>[];
-    for (final p in rawPoints) {
-      if (p is List && p.length >= 2 && p[0] is num && p[1] is num) {
-        points.add(Offset((p[0] as num).toDouble(), (p[1] as num).toDouble()));
-      } else if (p is Map && p['x'] is num && p['y'] is num) {
-        points.add(
-            Offset((p['x'] as num).toDouble(), (p['y'] as num).toDouble()));
-      }
-    }
-    return points;
-  }
-
-  double _extractStrokeWidth(Map<String, dynamic> stroke) {
-    final widthRatio =
-        ((stroke['widthRatio'] as num?) ?? (stroke['w'] as num?))?.toDouble();
-    if (widthRatio != null) {
-      final normalized = widthRatio > 1.0 ? widthRatio / 1000.0 : widthRatio;
-      return (normalized * imageBounds.width).clamp(3.0, 120.0);
-    }
-    final strokeWidth = (stroke['strokeWidth'] as num?)?.toDouble();
-    return strokeWidth ?? 15.0;
-  }
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    canvas.saveLayer(Rect.fromLTWH(0, 0, size.width, size.height),
-        Paint()..color = Colors.white.withValues(alpha: opacity));
-
-    for (final stroke in strokes) {
-      final points = _extractPoints(stroke['points'] ?? stroke['p']);
-      if (points.isEmpty) continue;
-      final width = _extractStrokeWidth(stroke);
-      final isEraser = stroke['isEraser'] == true || stroke['e'] == 1;
-      final isShape = stroke['isShape'] == true || stroke['s'] == 1;
-      if (!isShape && parseSquareBrush(stroke)) {
-        final paint = Paint()
-          ..color = isEraser ? Colors.transparent : color.withValues(alpha: 1.0)
-          ..blendMode = isEraser ? BlendMode.clear : BlendMode.srcOver;
-        paintSquareBrush(
-            canvas, points.map(_limitPoint).toList(), width, paint);
-        continue;
-      }
-      _drawStroke(canvas, points, width, isEraser, isShape);
-    }
-
-    canvas.restore();
-  }
-
-  void _drawStroke(Canvas canvas, List<Offset> points, double width,
-      bool isEraser, bool isShape) {
-    if (points.isEmpty) return;
-
-    final paint = Paint()
-      ..color = isEraser ? Colors.transparent : color.withValues(alpha: 1.0)
-      ..strokeWidth = width
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round
-      ..style = isShape ? PaintingStyle.fill : PaintingStyle.stroke;
-
-    if (isEraser) {
-      paint.blendMode = BlendMode.clear;
-    }
-
-    final path = Path();
-    final start = _limitPoint(points[0]);
-    path.moveTo(start.dx, start.dy);
-
-    if (points.length == 1) {
-      path.lineTo(start.dx, start.dy);
-    }
-
-    for (int i = 1; i < points.length; i++) {
-      final p = _limitPoint(points[i]);
-      path.lineTo(p.dx, p.dy);
-    }
-
-    if (isShape) {
-      path.close();
-    }
-
-    canvas.drawPath(path, paint);
-  }
-
-  Offset _limitPoint(Offset ratio) {
-    return Offset(
-      imageBounds.offsetX + ratio.dx * imageBounds.width,
-      imageBounds.offsetY + ratio.dy * imageBounds.height,
-    );
-  }
-
-  @override
-  bool shouldRepaint(covariant _ImpactAreaPainter oldDelegate) {
-    return oldDelegate.strokes != strokes ||
-        oldDelegate.opacity != opacity ||
-        oldDelegate.color != color;
-  }
-}
-
-class _DashedLinePainter extends CustomPainter {
-  final Offset start;
-  final Offset end;
-  final Color color;
-  final double strokeWidth;
-  final double dashLength;
-  final double gapLength;
-  final bool showArrow;
-  final double arrowLength;
-
-  _DashedLinePainter({
-    required this.start,
-    required this.end,
-    required this.color,
-    this.strokeWidth = 1.5,
-    this.dashLength = 4,
-    this.gapLength = 4,
-    this.showArrow = false,
-    this.arrowLength = 8.0,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final totalLength = (end - start).distance;
-    if (totalLength < 1e-3) return;
-
-    final paint = Paint()
-      ..color = color
-      ..strokeWidth = strokeWidth
-      ..style = PaintingStyle.stroke;
-
-    final path = Path();
-    final direction = (end - start) / totalLength;
-
-    double currentLength = 0;
-    bool draw = true;
-
-    path.moveTo(start.dx, start.dy);
-
-    while (currentLength < totalLength) {
-      final segmentLength = draw ? dashLength : gapLength;
-      final nextLength =
-          (currentLength + segmentLength).clamp(0.0, totalLength);
-      final nextPoint = start + direction * nextLength;
-
-      if (draw) {
-        path.lineTo(nextPoint.dx, nextPoint.dy);
-      } else {
-        path.moveTo(nextPoint.dx, nextPoint.dy);
-      }
-
-      currentLength = nextLength;
-      draw = !draw;
-    }
-
-    canvas.drawPath(path, paint);
-
-    if (showArrow && totalLength > 2.0) {
-      final wingLength = math.min(arrowLength, totalLength * 0.45);
-      const spreadAngle = 28 * math.pi / 180;
-      final backAngle = math.atan2(-direction.dy, -direction.dx);
-      final leftWing = Offset(
-        end.dx + wingLength * math.cos(backAngle - spreadAngle),
-        end.dy + wingLength * math.sin(backAngle - spreadAngle),
-      );
-      final rightWing = Offset(
-        end.dx + wingLength * math.cos(backAngle + spreadAngle),
-        end.dy + wingLength * math.sin(backAngle + spreadAngle),
-      );
-      final arrowPaint = Paint()
-        ..color = color
-        ..strokeWidth = strokeWidth
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round
-        ..style = PaintingStyle.stroke;
-      final arrowPath = Path()
-        ..moveTo(leftWing.dx, leftWing.dy)
-        ..lineTo(end.dx, end.dy)
-        ..lineTo(rightWing.dx, rightWing.dy);
-      canvas.drawPath(arrowPath, arrowPaint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _DashedLinePainter oldDelegate) {
-    return start != oldDelegate.start ||
-        end != oldDelegate.end ||
-        color != oldDelegate.color ||
-        strokeWidth != oldDelegate.strokeWidth ||
-        dashLength != oldDelegate.dashLength ||
-        gapLength != oldDelegate.gapLength ||
-        showArrow != oldDelegate.showArrow ||
-        arrowLength != oldDelegate.arrowLength;
   }
 }

@@ -2,16 +2,17 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:isar_community/isar.dart';
+
+import '../models.dart';
 import '../models/map_area.dart';
 import '../models/tag.dart';
-import '../models.dart';
 import '../providers.dart';
 import '../services/area_service.dart';
-import 'area_draw_screen.dart';
 import 'area_auto_tag_preview_screen.dart';
+import 'area_draw_screen.dart';
 import 'default_area_tag_dev_editor_screen.dart';
 
-/// 区域管理界面
+/// 地图区域管理界面。
 class AreaManagerScreen extends ConsumerStatefulWidget {
   final GameMap gameMap;
 
@@ -35,39 +36,44 @@ class _AreaManagerScreenState extends ConsumerState<AreaManagerScreen> {
     _loadAreas();
   }
 
+  static int _compareAreasByRecency(MapArea a, MapArea b) {
+    if (a.updatedAt.isAfter(b.updatedAt)) return -1;
+    if (a.updatedAt.isBefore(b.updatedAt)) return 1;
+    if (a.createdAt.isAfter(b.createdAt)) return -1;
+    if (a.createdAt.isBefore(b.createdAt)) return 1;
+    return b.id.compareTo(a.id);
+  }
+
+  void _showMessage(String text, {Color? backgroundColor}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(text), backgroundColor: backgroundColor),
+    );
+  }
+
   Future<void> _loadAreas() async {
-    setState(() => _isLoading = true);
+    if (mounted) setState(() => _isLoading = true);
     final isar = ref.read(isarProvider);
-    final areaService = AreaService(isar);
-    final areas = await areaService.getAreas(widget.gameMap.id);
+    final areas = await AreaService(isar).getAreas(widget.gameMap.id);
     final areaTags = await isar.tags
         .filter()
         .mapIdEqualTo(widget.gameMap.id)
         .dimensionEqualTo(TagDimension.area)
         .findAll();
+
     final tagsById = {for (final t in areaTags) t.id: t};
     final customAreas = <MapArea>[];
     final defaultAreas = <MapArea>[];
-
     for (final area in areas) {
-      final tag = tagsById[area.tagId];
-      if (tag?.isSystem == true) {
+      if (tagsById[area.tagId]?.isSystem == true) {
         defaultAreas.add(area);
       } else {
         customAreas.add(area);
       }
     }
 
-    int sortByTime(MapArea a, MapArea b) {
-      if (a.updatedAt.isAfter(b.updatedAt)) return -1;
-      if (a.updatedAt.isBefore(b.updatedAt)) return 1;
-      if (a.createdAt.isAfter(b.createdAt)) return -1;
-      if (a.createdAt.isBefore(b.createdAt)) return 1;
-      return b.id.compareTo(a.id);
-    }
-
-    customAreas.sort(sortByTime);
-    defaultAreas.sort(sortByTime);
+    customAreas.sort(_compareAreasByRecency);
+    defaultAreas.sort(_compareAreasByRecency);
 
     if (!mounted) return;
     setState(() {
@@ -78,7 +84,7 @@ class _AreaManagerScreenState extends ConsumerState<AreaManagerScreen> {
     });
   }
 
-  Future<MapLayer?> _selectLayer(List<MapLayer> layers) async {
+  Future<MapLayer?> _selectLayer(List<MapLayer> layers) {
     return showDialog<MapLayer>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -86,10 +92,12 @@ class _AreaManagerScreenState extends ConsumerState<AreaManagerScreen> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: layers
-              .map((l) => ListTile(
-                    title: Text(l.name),
-                    onTap: () => Navigator.pop(ctx, l),
-                  ))
+              .map(
+                (l) => ListTile(
+                  title: Text(l.name),
+                  onTap: () => Navigator.pop(ctx, l),
+                ),
+              )
               .toList(),
         ),
       ),
@@ -103,8 +111,7 @@ class _AreaManagerScreenState extends ConsumerState<AreaManagerScreen> {
 
     final layer =
         layers.length == 1 ? layers.first : await _selectLayer(layers);
-    if (layer == null) return;
-    if (!mounted) return;
+    if (layer == null || !mounted) return;
 
     final result = await Navigator.push<bool>(
       context,
@@ -121,60 +128,57 @@ class _AreaManagerScreenState extends ConsumerState<AreaManagerScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('删除区域'),
-        content: Text(isDefault
-            ? '确定删除区域 "${area.name}"？\n仅删除区域几何，保留默认标签。'
-            : '确定删除区域 "${area.name}"？\n关联的标签也会被删除。'),
+        content: Text(
+          isDefault
+              ? '确定删除区域 "${area.name}"？\n仅删除区域几何，保留默认标签。'
+              : '确定删除区域 "${area.name}"？\n关联的标签也会被删除。',
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
           TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              style: TextButton.styleFrom(foregroundColor: Colors.red),
-              child: const Text('删除')),
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('删除'),
+          ),
         ],
       ),
     );
     if (confirm != true) return;
 
-    final isar = ref.read(isarProvider);
-    final areaService = AreaService(isar);
-    await areaService.deleteArea(area, deleteTag: !isDefault);
+    await AreaService(ref.read(isarProvider))
+        .deleteArea(area, deleteTag: !isDefault);
     _loadAreas();
   }
 
   Future<void> _editArea(MapArea area) async {
     if (area.layerId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('该区域未关联楼层，无法编辑'), backgroundColor: Colors.red));
+      _showMessage('该区域未关联楼层，无法编辑', backgroundColor: Colors.red);
       return;
     }
 
-    final isar = ref.read(isarProvider);
-    final layer = await isar.mapLayers.get(area.layerId!);
-
+    final layer = await ref.read(isarProvider).mapLayers.get(area.layerId!);
     if (layer == null) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('关联楼层不存在'), backgroundColor: Colors.red));
+      _showMessage('关联楼层不存在', backgroundColor: Colors.red);
       return;
     }
-
     if (!mounted) return;
+
     final result = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
-          builder: (_) => AreaDrawScreen(
-              gameMap: widget.gameMap, layer: layer, area: area)),
+        builder: (_) =>
+            AreaDrawScreen(gameMap: widget.gameMap, layer: layer, area: area),
+      ),
     );
     if (result == true) _loadAreas();
   }
 
   Future<void> _openAreaAutoTag(MapArea area) async {
     if (area.layerId == null) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('该区域未关联楼层，无法可视化标注'), backgroundColor: Colors.red));
+      _showMessage('该区域未关联楼层，无法可视化标注', backgroundColor: Colors.red);
       return;
     }
     await Navigator.push<bool>(
@@ -186,23 +190,12 @@ class _AreaManagerScreenState extends ConsumerState<AreaManagerScreen> {
         ),
       ),
     );
-    if (mounted) {
-      _loadAreas();
-    }
+    if (mounted) _loadAreas();
   }
 
-  Future<void> _quickAutoTagAllGrenades() async {
-    if (_isAutoTaggingAll) return;
-    if (_customAreas.isEmpty && _defaultAreas.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('当前地图还没有区域数据，无法自动添加标签'),
-        backgroundColor: Colors.orange,
-      ));
-      return;
-    }
-
+  Future<bool?> _confirmAutoTagMode() {
     bool selectedByImpact = _autoTagByImpact;
-    final confirm = await showDialog<bool>(
+    return showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
@@ -227,40 +220,45 @@ class _AreaManagerScreenState extends ConsumerState<AreaManagerScreen> {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
+              onPressed: () => Navigator.pop(ctx),
               child: const Text('取消'),
             ),
             FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
+              onPressed: () => Navigator.pop(ctx, selectedByImpact),
               child: const Text('开始'),
             ),
           ],
         ),
       ),
     );
-    if (confirm != true || !mounted) return;
-    setState(() => _autoTagByImpact = selectedByImpact);
+  }
 
-    setState(() => _isAutoTaggingAll = true);
+  Future<void> _quickAutoTagAllGrenades() async {
+    if (_isAutoTaggingAll) return;
+    if (_customAreas.isEmpty && _defaultAreas.isEmpty) {
+      _showMessage('当前地图还没有区域数据，无法自动添加标签', backgroundColor: Colors.orange);
+      return;
+    }
+
+    final useImpactPoint = await _confirmAutoTagMode();
+    if (useImpactPoint == null || !mounted) return;
+
+    setState(() {
+      _autoTagByImpact = useImpactPoint;
+      _isAutoTaggingAll = true;
+    });
     try {
-      final isar = ref.read(isarProvider);
-      final areaService = AreaService(isar);
-      final result = await areaService.autoTagAllGrenades(
+      final result =
+          await AreaService(ref.read(isarProvider)).autoTagAllGrenades(
         widget.gameMap.id,
-        useImpactPoint: selectedByImpact,
+        useImpactPoint: useImpactPoint,
       );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(
-            '${selectedByImpact ? "按爆点" : "按站位"}全图同步完成：处理${result.processedGrenades}个，命中${result.matchedGrenades}个，新增${result.addedLinks}条，移除${result.removedLinks}条'),
+      _showMessage(
+        '${useImpactPoint ? "按爆点" : "按站位"}全图同步完成：处理${result.processedGrenades}个，命中${result.matchedGrenades}个，新增${result.addedLinks}条，移除${result.removedLinks}条',
         backgroundColor: Colors.green,
-      ));
+      );
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('全图自动添加失败：$e'),
-        backgroundColor: Colors.red,
-      ));
+      _showMessage('全图自动添加失败：$e', backgroundColor: Colors.red);
     } finally {
       if (mounted) {
         setState(() => _isAutoTaggingAll = false);
@@ -312,35 +310,41 @@ class _AreaManagerScreenState extends ConsumerState<AreaManagerScreen> {
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : (_customAreas.isEmpty && _defaultAreas.isEmpty)
-              ? Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.map_outlined,
-                          size: 64, color: Colors.grey[600]),
-                      const SizedBox(height: 16),
-                      Text('暂无区域',
-                          style:
-                              TextStyle(color: Colors.grey[500], fontSize: 16)),
-                      const SizedBox(height: 8),
-                      const Text('点击下方按钮创建区域',
-                          style: TextStyle(color: Colors.grey, fontSize: 12)),
-                    ],
-                  ),
-                )
+              ? _buildEmptyState()
               : ListView(
                   padding: const EdgeInsets.all(16),
                   children: [
                     if (_customAreas.isNotEmpty) ...[
                       _buildSectionHeader('自定义区域', _customAreas.length),
-                      ..._customAreas.map((area) => _buildAreaTile(area)),
+                      ..._customAreas.map(_buildAreaTile),
                     ],
                     if (_defaultAreas.isNotEmpty) ...[
                       _buildSectionHeader('默认标签区域', _defaultAreas.length),
-                      ..._defaultAreas.map((area) => _buildAreaTile(area)),
+                      ..._defaultAreas.map(_buildAreaTile),
                     ],
                   ],
                 ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.map_outlined, size: 64, color: Colors.grey[600]),
+          const SizedBox(height: 16),
+          Text(
+            '暂无区域',
+            style: TextStyle(color: Colors.grey[500], fontSize: 16),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            '点击下方按钮创建区域',
+            style: TextStyle(color: Colors.grey, fontSize: 12),
+          ),
+        ],
+      ),
     );
   }
 
@@ -365,6 +369,7 @@ class _AreaManagerScreenState extends ConsumerState<AreaManagerScreen> {
 
   Widget _buildAreaTile(MapArea area) {
     final isDefault = _areaTagsById[area.tagId]?.isSystem == true;
+    final areaColor = Color(area.colorValue);
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: ListTile(
@@ -372,16 +377,13 @@ class _AreaManagerScreenState extends ConsumerState<AreaManagerScreen> {
           width: 40,
           height: 40,
           decoration: BoxDecoration(
-            color: Color(area.colorValue).withValues(alpha: 0.3),
+            color: areaColor.withValues(alpha: 0.3),
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: Color(area.colorValue)),
+            border: Border.all(color: areaColor),
           ),
-          child: Icon(Icons.map, color: Color(area.colorValue)),
+          child: Icon(Icons.map, color: areaColor),
         ),
-        title: Text(
-          area.name,
-          overflow: TextOverflow.ellipsis,
-        ),
+        title: Text(area.name, overflow: TextOverflow.ellipsis),
         subtitle: Text(
           isDefault
               ? '默认标签'
