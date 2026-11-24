@@ -5,35 +5,36 @@ import 'import_screen.dart';
 import 'lan_sync_screen.dart';
 import 'share_screen.dart';
 
+/// 数据传输中心页面
 class DataTransferHubScreen extends StatelessWidget {
   const DataTransferHubScreen({super.key});
 
+  static const List<_TransferItem> _items = [
+    _TransferItem(
+      title: '导入道具包',
+      description: '从文件、链接或云端仓库添加道具数据',
+      icon: Icons.download_rounded,
+      color: Color(0xFF2877C7),
+      destination: ImportScreen(),
+    ),
+    _TransferItem(
+      title: '导出与分享',
+      description: '选择地图或道具，生成可分享的数据包',
+      icon: Icons.ios_share_rounded,
+      color: Color(0xFFC65D00),
+      destination: ShareScreen(),
+    ),
+    _TransferItem(
+      title: '局域网同步',
+      description: '在同一网络的电脑与手机之间直接同步',
+      icon: Icons.sync_rounded,
+      color: Color(0xFF258A49),
+      destination: LanSyncScreen(),
+    ),
+  ];
+
   @override
   Widget build(BuildContext context) {
-    final items = <_TransferItem>[
-      const _TransferItem(
-        title: '导入道具包',
-        description: '从文件、链接或云端仓库添加道具数据',
-        icon: Icons.download_rounded,
-        color: Color(0xFF2877C7),
-        destination: ImportScreen(),
-      ),
-      const _TransferItem(
-        title: '导出与分享',
-        description: '选择地图或道具，生成可分享的数据包',
-        icon: Icons.ios_share_rounded,
-        color: Color(0xFFC65D00),
-        destination: ShareScreen(),
-      ),
-      const _TransferItem(
-        title: '局域网同步',
-        description: '在同一网络的电脑与手机之间直接同步',
-        icon: Icons.sync_rounded,
-        color: Color(0xFF258A49),
-        destination: LanSyncScreen(),
-      ),
-    ];
-
     return Scaffold(
       backgroundColor: Colors.transparent,
       appBar: AppBar(
@@ -48,7 +49,9 @@ class DataTransferHubScreen extends StatelessWidget {
           return GridView.builder(
             padding: AppBreakpoints.isMobile(context)
                 ? AppBreakpoints.withMobileBottomBarClearance(
-                    context, const EdgeInsets.all(24))
+                    context,
+                    const EdgeInsets.all(24),
+                  )
                 : const EdgeInsets.all(24),
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: columns,
@@ -56,8 +59,8 @@ class DataTransferHubScreen extends StatelessWidget {
               crossAxisSpacing: 16,
               mainAxisSpacing: 16,
             ),
-            itemCount: items.length,
-            itemBuilder: (context, index) => _TransferTile(item: items[index]),
+            itemCount: _items.length,
+            itemBuilder: (context, index) => _TransferTile(item: _items[index]),
           );
         },
       ),
@@ -83,6 +86,7 @@ class _TransferItem {
 
 class _TransferTile extends StatefulWidget {
   final _TransferItem item;
+
   const _TransferTile({required this.item});
 
   @override
@@ -123,17 +127,21 @@ class _TransferTileState extends State<_TransferTile> {
                     child: Icon(widget.item.icon, color: widget.item.color),
                   ),
                   const Spacer(),
-                  Text(widget.item.title,
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleMedium
-                          ?.copyWith(fontWeight: FontWeight.w700)),
+                  Text(
+                    widget.item.title,
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w700),
+                  ),
                   const SizedBox(height: 6),
-                  Text(widget.item.description,
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodySmall
-                          ?.copyWith(color: context.appTheme.mutedText)),
+                  Text(
+                    widget.item.description,
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: context.appTheme.mutedText),
+                  ),
                 ],
               ),
             ),

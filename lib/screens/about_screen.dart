@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 /// 关于页面
 class AboutScreen extends StatefulWidget {
@@ -23,11 +23,13 @@ class _AboutScreenState extends State<AboutScreen> {
   Future<void> _loadPackageInfo() async {
     try {
       final info = await PackageInfo.fromPlatform();
+      if (!mounted) return;
       setState(() {
         _version = info.version;
         _buildNumber = info.buildNumber;
       });
-    } catch (e) {
+    } catch (_) {
+      if (!mounted) return;
       setState(() {
         _version = '未知';
         _buildNumber = '';
@@ -42,27 +44,29 @@ class _AboutScreenState extends State<AboutScreen> {
     }
   }
 
+  BoxDecoration _cardDecoration(bool isDark, double radius) {
+    return BoxDecoration(
+      color: isDark
+          ? Colors.white.withValues(alpha: 0.05)
+          : Colors.black.withValues(alpha: 0.03),
+      borderRadius: BorderRadius.circular(radius),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('关于'),
-      ),
+      appBar: AppBar(title: const Text('关于')),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
           children: [
             Container(
               padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: isDark
-                    ? Colors.white.withValues(alpha: 0.05)
-                    : Colors.black.withValues(alpha: 0.03),
-                borderRadius: BorderRadius.circular(20),
-              ),
+              decoration: _cardDecoration(isDark, 20),
               child: Column(
                 children: [
                   ClipRRect(
@@ -77,10 +81,7 @@ class _AboutScreenState extends State<AboutScreen> {
                   const SizedBox(height: 16),
                   const Text(
                     'Grenade Helper',
-                    style: TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 8),
                   Text(
@@ -101,12 +102,10 @@ class _AboutScreenState extends State<AboutScreen> {
                 ],
               ),
             ),
-
             const SizedBox(height: 24),
-
-            // 链接
             _buildSection(
               context,
+              isDark: isDark,
               icon: Icons.link,
               title: '相关链接',
               children: [
@@ -114,37 +113,40 @@ class _AboutScreenState extends State<AboutScreen> {
                   icon: Icons.code,
                   text: 'GitHub 仓库',
                   onTap: () => _launchUrl(
-                      'https://github.com/Invis1ble-2/Grenade_Helper'),
+                    'https://github.com/Invis1ble-2/Grenade_Helper',
+                  ),
                 ),
                 _LinkItem(
                   icon: Icons.bug_report,
                   text: '问题反馈',
                   onTap: () => _launchUrl(
-                      'https://github.com/Invis1ble-2/Grenade_Helper/issues'),
+                    'https://github.com/Invis1ble-2/Grenade_Helper/issues',
+                  ),
                 ),
                 _LinkItem(
                   icon: Icons.download,
                   text: '下载最新版本',
                   onTap: () => _launchUrl(
-                      'https://github.com/Invis1ble-2/Grenade_Helper/releases'),
+                    'https://github.com/Invis1ble-2/Grenade_Helper/releases',
+                  ),
                 ),
                 _LinkItem(
-                    icon: Icons.web,
-                    text: '官方网站',
-                    onTap: () => _launchUrl('https://grenade-helper.top/')),
+                  icon: Icons.web,
+                  text: '官方网站',
+                  onTap: () => _launchUrl('https://grenade-helper.top/'),
+                ),
                 _LinkItem(
-                    icon: Icons.web,
-                    text: '哔哩哔哩',
-                    onTap: () =>
-                        _launchUrl('https://space.bilibili.com/39354678')),
+                  icon: Icons.web,
+                  text: '哔哩哔哩',
+                  onTap: () =>
+                      _launchUrl('https://space.bilibili.com/39354678'),
+                ),
               ],
             ),
-
             const SizedBox(height: 16),
-
-            // QQ群
             _buildSection(
               context,
+              isDark: isDark,
               icon: Icons.group,
               title: '加入社区',
               children: [
@@ -162,49 +164,10 @@ class _AboutScreenState extends State<AboutScreen> {
                         textAlign: TextAlign.center,
                       ),
                       const SizedBox(height: 16),
-                      // QR码
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.1),
-                              blurRadius: 8,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                        child: Image.asset(
-                          'assets/icons/qq_qrcode.webp',
-                          width: 200,
-                          height: 200,
-                          fit: BoxFit.contain,
-                          errorBuilder: (_, __, ___) => Container(
-                            width: 200,
-                            height: 200,
-                            decoration: BoxDecoration(
-                              color: Colors.grey[200],
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(Icons.qr_code,
-                                    size: 50, color: Colors.grey[400]),
-                                const SizedBox(height: 8),
-                                Text(
-                                  'QQ 群二维码',
-                                  style: TextStyle(
-                                    color: Colors.grey[500],
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
+                      const _QrCodeCard(
+                        assetPath: 'assets/icons/qq_qrcode.webp',
+                        size: 200,
+                        fallbackLabel: 'QQ 群二维码',
                       ),
                       const SizedBox(height: 12),
                       Text(
@@ -221,90 +184,26 @@ class _AboutScreenState extends State<AboutScreen> {
                 ),
               ],
             ),
-
             const SizedBox(height: 16),
             _buildSection(
               context,
+              isDark: isDark,
               icon: Icons.person,
               title: '开发者',
               children: [
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Row(
-                    children: [
-                      CircleAvatar(
-                        radius: 20,
-                        backgroundColor: Theme.of(context).colorScheme.primary,
-                        child: const Icon(Icons.person, color: Colors.white),
-                      ),
-                      const SizedBox(width: 12),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Invis1ble',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          Text(
-                            '独立开发者',
-                            style: TextStyle(
-                              color: theme.colorScheme.onSurface
-                                  .withValues(alpha: 0.6),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
+                const _DeveloperTile(name: 'Invis1ble', role: '独立开发者'),
                 Container(
                   margin: const EdgeInsets.symmetric(vertical: 4),
                   height: 1,
                   color: theme.colorScheme.onSurface.withValues(alpha: 0.1),
                 ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: Row(
-                    children: [
-                      CircleAvatar(
-                        radius: 20,
-                        backgroundColor: Theme.of(context).colorScheme.primary,
-                        child: const Icon(Icons.person, color: Colors.white),
-                      ),
-                      const SizedBox(width: 12),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'MaiMing',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          Text(
-                            '独立开发者',
-                            style: TextStyle(
-                              color: theme.colorScheme.onSurface
-                                  .withValues(alpha: 0.6),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
+                const _DeveloperTile(name: 'MaiMing', role: '独立开发者'),
               ],
             ),
-
             const SizedBox(height: 16),
-
-            // 支持
             _buildSection(
               context,
+              isDark: isDark,
               icon: Icons.favorite,
               title: '支持开发者',
               children: [
@@ -322,49 +221,10 @@ class _AboutScreenState extends State<AboutScreen> {
                         textAlign: TextAlign.center,
                       ),
                       const SizedBox(height: 16),
-                      // 二维码图片
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(12),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.1),
-                              blurRadius: 8,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                        child: Image.asset(
-                          'assets/icons/afdian.webp',
-                          width: 300,
-                          height: 300,
-                          fit: BoxFit.contain,
-                          errorBuilder: (_, __, ___) => Container(
-                            width: 300,
-                            height: 300,
-                            decoration: BoxDecoration(
-                              color: Colors.grey[200],
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(Icons.qr_code,
-                                    size: 50, color: Colors.grey[400]),
-                                const SizedBox(height: 8),
-                                Text(
-                                  '二维码占位符',
-                                  style: TextStyle(
-                                    color: Colors.grey[500],
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
+                      const _QrCodeCard(
+                        assetPath: 'assets/icons/afdian.webp',
+                        size: 300,
+                        fallbackLabel: '二维码占位符',
                       ),
                       const SizedBox(height: 16),
                     ],
@@ -377,10 +237,7 @@ class _AboutScreenState extends State<AboutScreen> {
                 ),
               ],
             ),
-
             const SizedBox(height: 24),
-
-            // 版权
             Text(
               '© 2025 Grenade Helper. MIT License.',
               style: TextStyle(
@@ -388,9 +245,7 @@ class _AboutScreenState extends State<AboutScreen> {
                 color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
               ),
             ),
-
             const SizedBox(height: 8),
-
             Text(
               'Made with ❤️ using Flutter',
               style: TextStyle(
@@ -406,22 +261,16 @@ class _AboutScreenState extends State<AboutScreen> {
 
   Widget _buildSection(
     BuildContext context, {
+    required bool isDark,
     required IconData icon,
     required String title,
     required List<Widget> children,
   }) {
     final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: isDark
-            ? Colors.white.withValues(alpha: 0.05)
-            : Colors.black.withValues(alpha: 0.03),
-        borderRadius: BorderRadius.circular(16),
-      ),
+      decoration: _cardDecoration(isDark, 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -431,15 +280,112 @@ class _AboutScreenState extends State<AboutScreen> {
               const SizedBox(width: 8),
               Text(
                 title,
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
+                style:
+                    const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
             ],
           ),
           const SizedBox(height: 12),
           ...children,
+        ],
+      ),
+    );
+  }
+}
+
+class _QrCodeCard extends StatelessWidget {
+  final String assetPath;
+  final double size;
+  final String fallbackLabel;
+
+  const _QrCodeCard({
+    required this.assetPath,
+    required this.size,
+    required this.fallbackLabel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Image.asset(
+        assetPath,
+        width: size,
+        height: size,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => Container(
+          width: size,
+          height: size,
+          decoration: BoxDecoration(
+            color: Colors.grey[200],
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.qr_code, size: 50, color: Colors.grey[400]),
+              const SizedBox(height: 8),
+              Text(
+                fallbackLabel,
+                style: TextStyle(color: Colors.grey[500], fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DeveloperTile extends StatelessWidget {
+  final String name;
+  final String role;
+
+  const _DeveloperTile({
+    required this.name,
+    required this.role,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 20,
+            backgroundColor: theme.colorScheme.primary,
+            child: const Icon(Icons.person, color: Colors.white),
+          ),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                name,
+                style:
+                    const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+              Text(
+                role,
+                style: TextStyle(
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -459,6 +405,7 @@ class _LinkItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
@@ -466,20 +413,18 @@ class _LinkItem extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
         child: Row(
           children: [
-            Icon(icon, size: 18, color: Theme.of(context).colorScheme.primary),
+            Icon(icon, size: 18, color: primary),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
                 text,
-                style: TextStyle(
-                    fontSize: 14, color: Theme.of(context).colorScheme.primary),
+                style: TextStyle(fontSize: 14, color: primary),
               ),
             ),
             Icon(
               Icons.open_in_new,
               size: 16,
-              color:
-                  Theme.of(context).colorScheme.primary.withValues(alpha: 0.6),
+              color: primary.withValues(alpha: 0.6),
             ),
           ],
         ),

@@ -1,17 +1,19 @@
 import 'dart:io';
-import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:isar_community/isar.dart';
+
 import '../models.dart';
 import '../providers.dart';
-import '../services/data_service.dart';
 import '../services/cloud_package_service.dart';
-import 'import_history_detail_screen.dart';
 import 'cloud_packages_screen.dart';
+import 'import_history_detail_screen.dart';
 import 'import_preview_screen.dart';
 
+/// 道具导入主页面
 class ImportScreen extends ConsumerStatefulWidget {
   const ImportScreen({super.key});
 
@@ -22,11 +24,9 @@ class ImportScreen extends ConsumerStatefulWidget {
 class _ImportScreenState extends ConsumerState<ImportScreen>
     with SingleTickerProviderStateMixin {
   bool _isDragging = false;
-  final bool _isImporting = false;
   bool _isUrlImporting = false;
-  DataService? _dataService;
   List<ImportHistory> _histories = [];
-  late TabController _tabController;
+  late final TabController _tabController;
   final TextEditingController _urlController = TextEditingController();
 
   bool get _isDesktop =>
@@ -36,8 +36,6 @@ class _ImportScreenState extends ConsumerState<ImportScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    final isar = ref.read(isarProvider);
-    _dataService = DataService(isar);
     _loadHistories();
   }
 
@@ -52,13 +50,38 @@ class _ImportScreenState extends ConsumerState<ImportScreen>
     final isar = ref.read(isarProvider);
     final histories =
         await isar.importHistorys.where().sortByImportedAtDesc().findAll();
+    if (!mounted) return;
     setState(() => _histories = histories);
   }
 
-  Future<void> _handleImport() async {
-    if (_dataService == null) return;
+  Future<bool> _openPreviewAndHandleResult(
+    String filePath, {
+    bool requireTrustedPackage = false,
+  }) async {
+    if (!mounted) return false;
+    final importResult = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ImportPreviewScreen(
+          filePath: filePath,
+          requireTrustedPackage: requireTrustedPackage,
+        ),
+      ),
+    );
+    if (importResult == null) return false;
+    await _loadHistories();
+    if (!mounted) return true;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(importResult),
+        backgroundColor:
+            importResult.contains('成功') ? Colors.green : Colors.orange,
+      ),
+    );
+    return true;
+  }
 
-    // 选择文件
+  Future<void> _handleImport() async {
     final result = await FilePicker.platform.pickFiles(
       dialogTitle: '选择要导入的 .cs2pkg 文件',
     );
@@ -69,56 +92,20 @@ class _ImportScreenState extends ConsumerState<ImportScreen>
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text("请选择 .cs2pkg 格式的文件"), backgroundColor: Colors.orange),
+          content: Text('请选择 .cs2pkg 格式的文件'),
+          backgroundColor: Colors.orange,
+        ),
       );
       return;
     }
 
-    // 跳转预览
-    if (!mounted) return;
-    final importResult = await Navigator.push<String>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => ImportPreviewScreen(filePath: filePath),
-      ),
-    );
-
-    if (importResult == null) return;
-    await _loadHistories();
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(importResult),
-        backgroundColor:
-            importResult.contains("成功") ? Colors.green : Colors.orange,
-      ),
-    );
+    await _openPreviewAndHandleResult(filePath);
   }
 
   Future<void> _handleFileDrop(List<String> filePaths) async {
-    if (_dataService == null) return;
-
     for (final filePath in filePaths) {
       if (filePath.toLowerCase().endsWith('.cs2pkg')) {
-        // 跳转预览
-        if (!mounted) return;
-        final importResult = await Navigator.push<String>(
-          context,
-          MaterialPageRoute(
-            builder: (_) => ImportPreviewScreen(filePath: filePath),
-          ),
-        );
-
-        if (importResult == null) continue;
-        await _loadHistories();
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(importResult),
-            backgroundColor:
-                importResult.contains("成功") ? Colors.green : Colors.orange,
-          ),
-        );
+        await _openPreviewAndHandleResult(filePath);
       }
     }
   }
@@ -128,14 +115,18 @@ class _ImportScreenState extends ConsumerState<ImportScreen>
     if (url.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text('请输入 URL'), backgroundColor: Colors.orange),
+          content: Text('请输入 URL'),
+          backgroundColor: Colors.orange,
+        ),
       );
       return;
     }
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text('请输入有效的 URL'), backgroundColor: Colors.orange),
+          content: Text('请输入有效的 URL'),
+          backgroundColor: Colors.orange,
+        ),
       );
       return;
     }
@@ -148,35 +139,21 @@ class _ImportScreenState extends ConsumerState<ImportScreen>
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-                content: Text('下载失败，请检查 URL'), backgroundColor: Colors.red),
+              content: Text('下载失败，请检查 URL'),
+              backgroundColor: Colors.red,
+            ),
           );
         }
         return;
       }
 
-      // 跳转到预览界面
-      if (!mounted) return;
-      final importResult = await Navigator.push<String>(
-        context,
-        MaterialPageRoute(
-          builder: (_) => ImportPreviewScreen(
-            filePath: filePath,
-            requireTrustedPackage: true,
-          ),
-        ),
+      final imported = await _openPreviewAndHandleResult(
+        filePath,
+        requireTrustedPackage: true,
       );
-
-      if (importResult == null) return;
-      await _loadHistories();
-      if (!mounted) return;
-      _urlController.clear();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(importResult),
-          backgroundColor:
-              importResult.contains('成功') ? Colors.green : Colors.orange,
-        ),
-      );
+      if (imported && mounted) {
+        _urlController.clear();
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -197,35 +174,32 @@ class _ImportScreenState extends ConsumerState<ImportScreen>
 
   @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text("导入"),
-          bottom: TabBar(
-            controller: _tabController,
-            indicatorColor: Colors.green,
-            labelColor: Colors.green,
-            unselectedLabelColor: Colors.grey,
-            tabs: const [
-              Tab(text: "导入文件"),
-              Tab(text: "导入历史"),
-            ],
-          ),
-        ),
-        body: TabBarView(
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('导入'),
+        bottom: TabBar(
           controller: _tabController,
-          children: [
-            _buildImportTab(),
-            _buildHistoryTab(),
+          indicatorColor: Colors.green,
+          labelColor: Colors.green,
+          unselectedLabelColor: Colors.grey,
+          tabs: const [
+            Tab(text: '导入文件'),
+            Tab(text: '导入历史'),
           ],
         ),
+      ),
+      body: TabBarView(
+        controller: _tabController,
+        children: [
+          _buildImportTab(),
+          _buildHistoryTab(),
+        ],
       ),
     );
   }
 
   Widget _buildImportTab() {
-    Widget body = Center(
+    final content = Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
         child: Column(
@@ -238,22 +212,22 @@ class _ImportScreenState extends ConsumerState<ImportScreen>
             ),
             const SizedBox(height: 24),
             const Text(
-              "导入道具数据",
+              '导入道具数据',
               style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 16),
             Text(
               _isDesktop
-                  ? "点击下方按钮选择文件，或直接拖拽 .cs2pkg 文件到此页面"
-                  : "点击下方按钮选择 .cs2pkg 文件进行导入",
+                  ? '点击下方按钮选择文件，或直接拖拽 .cs2pkg 文件到此页面'
+                  : '点击下方按钮选择 .cs2pkg 文件进行导入',
               style: const TextStyle(color: Colors.grey, fontSize: 14),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 40),
             ElevatedButton.icon(
-              onPressed: _isImporting ? null : _handleImport,
+              onPressed: _handleImport,
               icon: const Icon(Icons.folder_open),
-              label: const Text("选择文件", style: TextStyle(fontSize: 16)),
+              label: const Text('选择文件', style: TextStyle(fontSize: 16)),
               style: ElevatedButton.styleFrom(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
@@ -263,7 +237,6 @@ class _ImportScreenState extends ConsumerState<ImportScreen>
               ),
             ),
             const SizedBox(height: 32),
-            // URL导入
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -278,9 +251,11 @@ class _ImportScreenState extends ConsumerState<ImportScreen>
                       Icon(Icons.link, size: 18, color: Colors.orange),
                       SizedBox(width: 8),
                       Text(
-                        "从 URL 导入",
+                        '从 URL 导入',
                         style: TextStyle(
-                            fontWeight: FontWeight.bold, fontSize: 15),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                        ),
                       ),
                     ],
                   ),
@@ -296,7 +271,9 @@ class _ImportScreenState extends ConsumerState<ImportScreen>
                               borderRadius: BorderRadius.circular(8),
                             ),
                             contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 10),
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
                             isDense: true,
                           ),
                           onSubmitted: (_) => _handleUrlImport(),
@@ -309,7 +286,9 @@ class _ImportScreenState extends ConsumerState<ImportScreen>
                           backgroundColor: Colors.orange,
                           foregroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 20, vertical: 12),
+                            horizontal: 20,
+                            vertical: 12,
+                          ),
                         ),
                         child: _isUrlImporting
                             ? const SizedBox(
@@ -320,30 +299,30 @@ class _ImportScreenState extends ConsumerState<ImportScreen>
                                   color: Colors.white,
                                 ),
                               )
-                            : const Text("导入"),
+                            : const Text('导入'),
                       ),
                     ],
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    "支持 GitHub 直链下载",
+                    '支持 GitHub 直链下载',
                     style: TextStyle(fontSize: 12, color: Colors.grey),
                   ),
                 ],
               ),
             ),
             const SizedBox(height: 24),
-            // 在线库
             OutlinedButton.icon(
               onPressed: () {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                      builder: (_) => const CloudPackagesScreen()),
+                    builder: (_) => const CloudPackagesScreen(),
+                  ),
                 );
               },
               icon: const Icon(Icons.cloud_download),
-              label: const Text("浏览在线道具库", style: TextStyle(fontSize: 14)),
+              label: const Text('浏览在线道具库', style: TextStyle(fontSize: 14)),
               style: OutlinedButton.styleFrom(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
@@ -356,88 +335,46 @@ class _ImportScreenState extends ConsumerState<ImportScreen>
       ),
     );
 
-    // 拖拽支持
-    if (_isDesktop) {
-      body = DropTarget(
-        onDragEntered: (_) => setState(() => _isDragging = true),
-        onDragExited: (_) => setState(() => _isDragging = false),
-        onDragDone: (details) async {
-          setState(() => _isDragging = false);
-          await _handleFileDrop(details.files.map((f) => f.path).toList());
-        },
-        child: Stack(
-          children: [
-            body,
-            if (_isDragging)
-              Container(
-                color: Colors.black.withValues(alpha: 0.7),
-                child: Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.file_download,
-                        size: 80,
-                        color: Colors.orange.withValues(alpha: 0.8),
-                      ),
-                      const SizedBox(height: 16),
-                      const Text(
-                        '释放以导入 .cs2pkg 文件',
-                        style: TextStyle(
-                          fontSize: 20,
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            if (_isImporting)
-              Container(
-                color: Colors.black.withValues(alpha: 0.7),
-                child: const Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      CircularProgressIndicator(color: Colors.orange),
-                      SizedBox(height: 16),
-                      Text(
-                        '正在导入...',
-                        style: TextStyle(color: Colors.white, fontSize: 18),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-          ],
-        ),
-      );
-    } else if (_isImporting) {
-      body = Stack(
+    if (!_isDesktop) return content;
+
+    return DropTarget(
+      onDragEntered: (_) => setState(() => _isDragging = true),
+      onDragExited: (_) => setState(() => _isDragging = false),
+      onDragDone: (details) async {
+        setState(() => _isDragging = false);
+        await _handleFileDrop(details.files.map((f) => f.path).toList());
+      },
+      child: Stack(
         children: [
-          body,
-          Container(
-            color: Colors.black.withValues(alpha: 0.7),
-            child: const Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CircularProgressIndicator(color: Colors.orange),
-                  SizedBox(height: 16),
-                  Text(
-                    '正在导入...',
-                    style: TextStyle(color: Colors.white, fontSize: 18),
-                  ),
-                ],
+          content,
+          if (_isDragging)
+            Container(
+              color: Colors.black.withValues(alpha: 0.7),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.file_download,
+                      size: 80,
+                      color: Colors.orange.withValues(alpha: 0.8),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      '释放以导入 .cs2pkg 文件',
+                      style: TextStyle(
+                        fontSize: 20,
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
         ],
-      );
-    }
-
-    return body;
+      ),
+    );
   }
 
   Widget _buildHistoryTab() {
@@ -448,7 +385,7 @@ class _ImportScreenState extends ConsumerState<ImportScreen>
           children: [
             Icon(Icons.history, size: 64, color: Colors.grey),
             SizedBox(height: 16),
-            Text("暂无导入记录", style: TextStyle(color: Colors.grey)),
+            Text('暂无导入记录', style: TextStyle(color: Colors.grey)),
           ],
         ),
       );
@@ -489,15 +426,15 @@ class _ImportScreenState extends ConsumerState<ImportScreen>
                 Row(
                   children: [
                     if (history.newCount > 0)
-                      _buildBadge("新增 ${history.newCount}", Colors.green),
+                      _buildBadge('新增 ${history.newCount}', Colors.green),
                     if (history.updatedCount > 0)
-                      _buildBadge("更新 ${history.updatedCount}", Colors.orange),
+                      _buildBadge('更新 ${history.updatedCount}', Colors.orange),
                   ],
                 ),
               ],
             ),
             trailing: Text(
-              "$total 个",
+              '$total 个',
               style: const TextStyle(
                 fontWeight: FontWeight.bold,
                 color: Colors.green,
@@ -528,8 +465,11 @@ class _ImportScreenState extends ConsumerState<ImportScreen>
       ),
       child: Text(
         text,
-        style:
-            TextStyle(fontSize: 10, color: color, fontWeight: FontWeight.w500),
+        style: TextStyle(
+          fontSize: 10,
+          color: color,
+          fontWeight: FontWeight.w500,
+        ),
       ),
     );
   }

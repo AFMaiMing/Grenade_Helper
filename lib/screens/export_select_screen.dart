@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:isar_community/isar.dart';
+
 import '../models.dart';
-import '../widgets/grenade_type_icon.dart';
 import '../providers.dart';
 import '../services/data_service.dart';
-import '../widgets/map_icon.dart';
+import 'export_select/export_bottom_action_bar.dart';
+import 'export_select/export_select_views.dart';
 import 'grenade_detail_screen.dart';
 
 /// 导出选择界面
@@ -32,22 +33,11 @@ class _ExportSelectScreenState extends ConsumerState<ExportSelectScreen> {
   ExportPackageEstimate? _exportEstimate;
   String? _estimateError;
 
-  // 地图列表
   List<GameMap> _maps = [];
-
-  // 分组数据
   Map<String, List<Grenade>> _grenadesByMap = {};
-
-  // 选中地图
   Set<String> _selectedMapNames = {};
-
-  // 选中道具
   Set<int> _selectedGrenadeIds = {};
-
-  // 当前地图
   String? _currentMapName;
-
-  // 类型筛选
   int? _filterType;
 
   @override
@@ -77,17 +67,14 @@ class _ExportSelectScreenState extends ConsumerState<ExportSelectScreen> {
       }
     }
 
-    // 初始选择
+    // 按模式初始化默认全选范围
     if (widget.mode == 1) {
-      // 多地图默认全选
       _selectedMapNames = grenadesByMap.keys.toSet();
     } else if (widget.mode == 2 && widget.singleMap != null) {
-      // 单地图默认全选
       _currentMapName = widget.singleMap!.name;
-      final mapGrenades = grenadesByMap[_currentMapName] ?? [];
+      final mapGrenades = grenadesByMap[_currentMapName] ?? const <Grenade>[];
       _selectedGrenadeIds = mapGrenades.map((g) => g.id).toSet();
     } else {
-      // 全道默认全选
       for (final grenades in grenadesByMap.values) {
         _selectedGrenadeIds.addAll(grenades.map((g) => g.id));
       }
@@ -103,18 +90,13 @@ class _ExportSelectScreenState extends ConsumerState<ExportSelectScreen> {
 
   List<Grenade> _getCurrentGrenades() {
     if (_currentMapName == null) return [];
-    var grenades = _grenadesByMap[_currentMapName] ?? [];
-
-    if (_filterType != null) {
-      grenades = grenades.where((g) => g.type == _filterType).toList();
-    }
-
-    return grenades;
+    final grenades = _grenadesByMap[_currentMapName] ?? [];
+    if (_filterType == null) return grenades;
+    return grenades.where((g) => g.type == _filterType).toList();
   }
 
   void _toggleSelectAllGrenades() {
-    final currentGrenades = _getCurrentGrenades();
-    final currentIds = currentGrenades.map((g) => g.id).toSet();
+    final currentIds = _getCurrentGrenades().map((g) => g.id).toSet();
     final allSelected =
         currentIds.every((id) => _selectedGrenadeIds.contains(id));
 
@@ -189,7 +171,7 @@ class _ExportSelectScreenState extends ConsumerState<ExportSelectScreen> {
         _isEstimating = false;
         _exportEstimate = estimate;
       });
-    } catch (e) {
+    } catch (_) {
       if (!mounted || requestId != _estimateRequestId) return;
       setState(() {
         _isEstimating = false;
@@ -206,7 +188,7 @@ class _ExportSelectScreenState extends ConsumerState<ExportSelectScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text("未选择任何道具"),
+              content: Text('未选择任何道具'),
               backgroundColor: Colors.orange,
             ),
           );
@@ -229,14 +211,12 @@ class _ExportSelectScreenState extends ConsumerState<ExportSelectScreen> {
 
       setState(() => _isExporting = true);
 
-      // 延时更新UI
+      // 让出主线程一帧以先渲染加载态指示器
       await Future.delayed(const Duration(milliseconds: 50));
       if (!mounted) return;
 
       final isar = ref.read(isarProvider);
       final dataService = DataService(isar);
-
-      // 执行导出
       await dataService.exportSelectedGrenades(context, grenadesToExport);
 
       if (mounted) {
@@ -245,232 +225,95 @@ class _ExportSelectScreenState extends ConsumerState<ExportSelectScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("导出失败: $e"), backgroundColor: Colors.red),
+          SnackBar(content: Text('导出失败: $e'), backgroundColor: Colors.red),
         );
         setState(() => _isExporting = false);
       }
     }
   }
 
+  Widget _buildBottomActionBar(bool enabled) {
+    final count = widget.mode == 1
+        ? _selectedMapNames.fold<int>(
+            0,
+            (sum, name) => sum + (_grenadesByMap[name]?.length ?? 0),
+          )
+        : _selectedGrenadeIds.length;
+
+    return ExportBottomActionBar(
+      enabled: enabled,
+      selectedCount: count,
+      isExporting: _isExporting,
+      isEstimating: _isEstimating,
+      exportEstimate: _exportEstimate,
+      estimateError: _estimateError,
+      onExport: _doExport,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
       return Scaffold(
-        appBar: AppBar(title: const Text("选择要分享的内容")),
+        appBar: AppBar(title: const Text('选择要分享的内容')),
         body: const Center(child: CircularProgressIndicator()),
       );
     }
 
-    // 地图选择模式
+    final mapsWithGrenades =
+        _maps.where((m) => _grenadesByMap.containsKey(m.name)).toList();
+
     if (widget.mode == 1) {
-      return _buildMapSelectScreen();
+      return ExportMapSelectView(
+        mapsWithGrenades: mapsWithGrenades,
+        grenadesByMap: _grenadesByMap,
+        selectedMapNames: _selectedMapNames,
+        onToggleSelectAll: _toggleSelectAllMaps,
+        onToggleMap: (mapName, selected) {
+          _updateSelectionState(() {
+            if (selected) {
+              _selectedMapNames.add(mapName);
+            } else {
+              _selectedMapNames.remove(mapName);
+            }
+          });
+        },
+        bottomBar: _buildBottomActionBar(_selectedMapNames.isNotEmpty),
+      );
     }
 
-    // 道具选择-地图列表
     if (widget.mode == 0 && _currentMapName == null) {
-      return _buildMapListForGrenadeSelect();
+      return ExportMapListForGrenadeView(
+        mapsWithGrenades: mapsWithGrenades,
+        grenadesByMap: _grenadesByMap,
+        selectedGrenadeIds: _selectedGrenadeIds,
+        onToggleAllMaps: (allSelected) {
+          _updateSelectionState(() {
+            if (allSelected) {
+              _selectedGrenadeIds.clear();
+            } else {
+              for (final grenades in _grenadesByMap.values) {
+                _selectedGrenadeIds.addAll(grenades.map((g) => g.id));
+              }
+            }
+          });
+        },
+        onToggleMapGrenades: (mapGrenades, selectAll) {
+          _updateSelectionState(() {
+            final ids = mapGrenades.map((g) => g.id);
+            if (selectAll) {
+              _selectedGrenadeIds.addAll(ids);
+            } else {
+              _selectedGrenadeIds.removeAll(ids);
+            }
+          });
+        },
+        onOpenMap: (mapName) => setState(() => _currentMapName = mapName),
+        bottomBar: _buildBottomActionBar(_selectedGrenadeIds.isNotEmpty),
+      );
     }
 
-    // 道具列表
     return _buildGrenadeListScreen();
-  }
-
-  Widget _buildMapSelectScreen() {
-    final mapsWithGrenades =
-        _maps.where((m) => _grenadesByMap.containsKey(m.name)).toList();
-    final allSelected =
-        mapsWithGrenades.every((m) => _selectedMapNames.contains(m.name));
-    final selectedCount = _selectedMapNames.length;
-
-    return Scaffold(
-      appBar: AppBar(title: const Text("选择要分享的地图")),
-      body: Column(
-        children: [
-          // 全选栏
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            child: Row(
-              children: [
-                Checkbox(
-                  value: mapsWithGrenades.isNotEmpty && allSelected,
-                  tristate: selectedCount > 0 && !allSelected,
-                  onChanged: (_) => _toggleSelectAllMaps(),
-                  activeColor: Colors.orange,
-                ),
-                Text(
-                  "全选 ($selectedCount/${mapsWithGrenades.length})",
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ],
-            ),
-          ),
-          // 地图列表
-          Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: mapsWithGrenades.length,
-              itemBuilder: (context, index) {
-                final map = mapsWithGrenades[index];
-                final count = _grenadesByMap[map.name]?.length ?? 0;
-                final isSelected = _selectedMapNames.contains(map.name);
-
-                return Card(
-                  margin: const EdgeInsets.only(bottom: 12),
-                  child: ListTile(
-                    leading: Checkbox(
-                      value: isSelected,
-                      onChanged: (val) {
-                        _updateSelectionState(() {
-                          if (val == true) {
-                            _selectedMapNames.add(map.name);
-                          } else {
-                            _selectedMapNames.remove(map.name);
-                          }
-                        });
-                      },
-                      activeColor: Colors.orange,
-                    ),
-                    title: Row(
-                      children: [
-                        MapIcon(path: map.iconPath, size: 32),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(map.name,
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.bold)),
-                        ),
-                      ],
-                    ),
-                    subtitle: Padding(
-                      padding: const EdgeInsets.only(left: 44),
-                      child: Text("$count 个道具"),
-                    ),
-                    onTap: () {
-                      _updateSelectionState(() {
-                        if (isSelected) {
-                          _selectedMapNames.remove(map.name);
-                        } else {
-                          _selectedMapNames.add(map.name);
-                        }
-                      });
-                    },
-                  ),
-                );
-              },
-            ),
-          ),
-          // 导出按钮
-          _buildExportButton(_selectedMapNames.isNotEmpty),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMapListForGrenadeSelect() {
-    final mapsWithGrenades =
-        _maps.where((m) => _grenadesByMap.containsKey(m.name)).toList();
-
-    // 计算数量
-    int totalGrenades = 0;
-    for (final grenades in _grenadesByMap.values) {
-      totalGrenades += grenades.length;
-    }
-    final allSelected =
-        totalGrenades > 0 && _selectedGrenadeIds.length == totalGrenades;
-
-    return Scaffold(
-      appBar: AppBar(title: const Text("选择地图")),
-      body: Column(
-        children: [
-          // 全选栏
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            child: Row(
-              children: [
-                Checkbox(
-                  value: allSelected,
-                  tristate: _selectedGrenadeIds.isNotEmpty && !allSelected,
-                  onChanged: (_) {
-                    _updateSelectionState(() {
-                      if (allSelected) {
-                        _selectedGrenadeIds.clear();
-                      } else {
-                        for (final grenades in _grenadesByMap.values) {
-                          _selectedGrenadeIds.addAll(grenades.map((g) => g.id));
-                        }
-                      }
-                    });
-                  },
-                  activeColor: Colors.orange,
-                ),
-                Text(
-                  "全选所有地图 (${_selectedGrenadeIds.length}/$totalGrenades)",
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ],
-            ),
-          ),
-          // 地图列表
-          Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: mapsWithGrenades.length,
-              itemBuilder: (context, index) {
-                final map = mapsWithGrenades[index];
-                final grenades = _grenadesByMap[map.name] ?? [];
-                final selectedInMap = grenades
-                    .where((g) => _selectedGrenadeIds.contains(g.id))
-                    .length;
-                final allInMapSelected =
-                    grenades.isNotEmpty && selectedInMap == grenades.length;
-
-                return Card(
-                  margin: const EdgeInsets.only(bottom: 12),
-                  child: ListTile(
-                    leading: Checkbox(
-                      value: allInMapSelected,
-                      tristate: selectedInMap > 0 && !allInMapSelected,
-                      onChanged: (val) {
-                        _updateSelectionState(() {
-                          if (allInMapSelected) {
-                            _selectedGrenadeIds
-                                .removeAll(grenades.map((g) => g.id));
-                          } else {
-                            _selectedGrenadeIds
-                                .addAll(grenades.map((g) => g.id));
-                          }
-                        });
-                      },
-                      activeColor: Colors.orange,
-                    ),
-                    title: Row(
-                      children: [
-                        MapIcon(path: map.iconPath, size: 32),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(map.name,
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.bold)),
-                        ),
-                      ],
-                    ),
-                    subtitle: Padding(
-                      padding: const EdgeInsets.only(left: 44),
-                      child: Text("已选 $selectedInMap / ${grenades.length} 个道具"),
-                    ),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () => setState(() => _currentMapName = map.name),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-      bottomNavigationBar: _buildExportButton(_selectedGrenadeIds.isNotEmpty),
-    );
   }
 
   Widget _buildGrenadeListScreen() {
@@ -481,7 +324,7 @@ class _ExportSelectScreenState extends ConsumerState<ExportSelectScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_currentMapName ?? "选择道具"),
+        title: Text(_currentMapName ?? '选择道具'),
         leading: widget.mode == 0
             ? IconButton(
                 icon: const Icon(Icons.arrow_back),
@@ -491,281 +334,61 @@ class _ExportSelectScreenState extends ConsumerState<ExportSelectScreen> {
       ),
       body: Column(
         children: [
-          // 类型筛选栏
-          _buildTypeFilter(),
-          // 全选栏
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            child: Row(
-              children: [
-                Checkbox(
-                  value: grenades.isNotEmpty &&
-                      selectedInCurrent == grenades.length,
-                  tristate: selectedInCurrent > 0 &&
-                      selectedInCurrent < grenades.length,
-                  onChanged: (_) => _toggleSelectAllGrenades(),
-                  activeColor: Colors.orange,
-                ),
-                Text(
-                  "全选 ($selectedInCurrent/${grenades.length})",
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                const Spacer(),
-                Text(
-                  "共选 ${_selectedGrenadeIds.length} 个",
-                  style: TextStyle(color: Colors.grey[600], fontSize: 12),
-                ),
-              ],
+          ExportTypeFilterBar(
+            selectedType: _filterType,
+            onTypeChanged: (type) => setState(() => _filterType = type),
+          ),
+          ExportSelectAllBar(
+            value: grenades.isNotEmpty && selectedInCurrent == grenades.length,
+            tristate:
+                selectedInCurrent > 0 && selectedInCurrent < grenades.length,
+            label: '全选 ($selectedInCurrent/${grenades.length})',
+            onToggle: _toggleSelectAllGrenades,
+            trailing: Text(
+              '共选 ${_selectedGrenadeIds.length} 个',
+              style: TextStyle(color: Colors.grey[600], fontSize: 12),
             ),
           ),
-          // 道具列表
           Expanded(
             child: grenades.isEmpty
                 ? const Center(
-                    child: Text("无匹配的道具", style: TextStyle(color: Colors.grey)))
+                    child: Text('无匹配的道具', style: TextStyle(color: Colors.grey)),
+                  )
                 : ListView.builder(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     itemCount: grenades.length,
-                    itemBuilder: (context, index) =>
-                        _buildGrenadeItem(grenades[index]),
+                    itemBuilder: (context, index) {
+                      final grenade = grenades[index];
+                      return ExportGrenadeTile(
+                        grenade: grenade,
+                        isSelected: _selectedGrenadeIds.contains(grenade.id),
+                        onChanged: (selected) {
+                          _updateSelectionState(() {
+                            if (selected) {
+                              _selectedGrenadeIds.add(grenade.id);
+                            } else {
+                              _selectedGrenadeIds.remove(grenade.id);
+                            }
+                          });
+                        },
+                        onPreview: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => GrenadeDetailScreen(
+                                grenadeId: grenade.id,
+                                isEditing: false,
+                              ),
+                            ),
+                          );
+                        },
+                      );
+                    },
                   ),
           ),
-          // 导出按钮
-          _buildExportButton(_selectedGrenadeIds.isNotEmpty),
+          _buildBottomActionBar(_selectedGrenadeIds.isNotEmpty),
         ],
       ),
-    );
-  }
-
-  Widget _buildTypeFilter() {
-    const types = [
-      (null, "全部"),
-      (GrenadeType.smoke, "烟雾"),
-      (GrenadeType.flash, "闪光"),
-      (GrenadeType.molotov, "燃烧"),
-      (GrenadeType.he, "手雷"),
-      (GrenadeType.wallbang, "穿点"),
-    ];
-
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: types.map((t) {
-            final isSelected = _filterType == t.$1;
-            return Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: FilterChip(
-                label: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    GrenadeFilterIcon(
-                      type: t.$1,
-                      size: 16,
-                      color: isSelected ? Colors.white : Colors.grey,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(t.$2),
-                  ],
-                ),
-                selected: isSelected,
-                onSelected: (_) => setState(() => _filterType = t.$1),
-                selectedColor: Colors.orange,
-                checkmarkColor: Colors.white,
-              ),
-            );
-          }).toList(),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildGrenadeItem(Grenade grenade) {
-    final isSelected = _selectedGrenadeIds.contains(grenade.id);
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: ListTile(
-        leading: Checkbox(
-          value: isSelected,
-          onChanged: (val) {
-            _updateSelectionState(() {
-              if (val == true) {
-                _selectedGrenadeIds.add(grenade.id);
-              } else {
-                _selectedGrenadeIds.remove(grenade.id);
-              }
-            });
-          },
-          activeColor: Colors.orange,
-        ),
-        title: Row(
-          children: [
-            GrenadeTypeIcon(type: grenade.type, size: 18),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                grenade.title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ],
-        ),
-        subtitle: grenade.author != null
-            ? Text("by: ${grenade.author}",
-                style: TextStyle(fontSize: 12, color: Colors.grey[600]))
-            : null,
-        trailing: IconButton(
-          icon: const Icon(Icons.visibility, color: Colors.blueAccent),
-          tooltip: "预览道具",
-          onPressed: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => GrenadeDetailScreen(
-                    grenadeId: grenade.id, isEditing: false),
-              ),
-            );
-          },
-        ),
-        dense: true,
-        onTap: () {
-          _updateSelectionState(() {
-            if (isSelected) {
-              _selectedGrenadeIds.remove(grenade.id);
-            } else {
-              _selectedGrenadeIds.add(grenade.id);
-            }
-          });
-        },
-      ),
-    );
-  }
-
-  Widget _buildExportButton(bool enabled) {
-    int count;
-    if (widget.mode == 1) {
-      count = _selectedMapNames.fold(
-          0, (sum, name) => sum + (_grenadesByMap[name]?.length ?? 0));
-    } else {
-      count = _selectedGrenadeIds.length;
-    }
-
-    final estimate = _exportEstimate;
-    final isOverLimit = estimate?.exceedsLimit ?? false;
-    final buttonEnabled =
-        enabled && !_isExporting && !_isEstimating && !isOverLimit;
-
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.1),
-            blurRadius: 4,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (enabled) _buildEstimateHint(),
-          if (enabled) const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: buttonEnabled ? _doExport : null,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.orange,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                disabledBackgroundColor: Colors.grey,
-              ),
-              child: _isExporting
-                  ? const SizedBox(
-                      width: 24,
-                      height: 24,
-                      child: CircularProgressIndicator(
-                          color: Colors.white, strokeWidth: 2),
-                    )
-                  : Text(
-                      "分享 ($count 个道具)",
-                      style: const TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.bold),
-                    ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildEstimateHint() {
-    if (_isEstimating) {
-      return Row(
-        children: [
-          const SizedBox(
-            width: 14,
-            height: 14,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            '正在估算导出包体...',
-            style: TextStyle(color: Colors.grey[600], fontSize: 12),
-          ),
-        ],
-      );
-    }
-
-    if (_estimateError != null) {
-      return Text(
-        _estimateError!,
-        style: TextStyle(color: Colors.orange[700], fontSize: 12),
-      );
-    }
-
-    final estimate = _exportEstimate;
-    if (estimate == null) {
-      return Text(
-        '选择道具后将显示预计导出包体',
-        style: TextStyle(color: Colors.grey[600], fontSize: 12),
-      );
-    }
-
-    final infoColor =
-        estimate.exceedsLimit ? Colors.red[700] : Colors.grey[700];
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          '预计导出包体 ${DataService.formatBytes(estimate.estimatedPackageBytes)}'
-          ' / 上限 ${DataService.formatBytes(estimate.limitBytes)}',
-          style: TextStyle(
-            color: infoColor,
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          '包含 ${estimate.mediaFileCount} 个媒体文件，体积为预估值，实际结果可能略有波动',
-          style: TextStyle(color: Colors.grey[600], fontSize: 12),
-        ),
-        if (estimate.exceedsLimit) ...[
-          const SizedBox(height: 4),
-          Text(
-            '已超过导出上限，请减少媒体文件或分批导出',
-            style: TextStyle(color: Colors.red[700], fontSize: 12),
-          ),
-        ],
-      ],
     );
   }
 }

@@ -1,11 +1,14 @@
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+
 import '../models/cloud_package.dart';
 import '../services/cloud_package_service.dart';
 import 'import_preview_screen.dart';
 
+/// 在线云端道具库页面
 class CloudPackagesScreen extends ConsumerStatefulWidget {
   const CloudPackagesScreen({super.key});
 
@@ -18,14 +21,12 @@ class _CloudPackagesScreenState extends ConsumerState<CloudPackagesScreen> {
   List<CloudPackage>? _packages;
   bool _isLoading = true;
   String? _error;
-  String _selectedMap = 'all'; // 全部
+  String _selectedMap = 'all';
   final Set<String> _downloadingIds = {};
   final Map<String, String?> _lastImportedDates = {};
-  final Map<String, double> _downloadProgress = {}; // 下载进度 0-1
+  final Map<String, double> _downloadProgress = {};
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
-
-  // 用于防止竞态条件：只有最新的请求才能更新 UI
   int _loadRequestId = 0;
 
   @override
@@ -34,8 +35,14 @@ class _CloudPackagesScreenState extends ConsumerState<CloudPackagesScreen> {
     _loadPackages();
   }
 
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   Future<void> _loadPackages() async {
-    // 递增请求 ID，使之前的请求失效
+    // 递增请求编号以屏蔽过期数据源回调
     final currentRequestId = ++_loadRequestId;
 
     setState(() {
@@ -44,24 +51,15 @@ class _CloudPackagesScreenState extends ConsumerState<CloudPackagesScreen> {
     });
 
     final index = await CloudPackageService.fetchIndex();
-
-    // 检查此请求是否仍然是最新的请求
-    // 如果用户已经切换到其他数据源，忽略此结果
-    if (currentRequestId != _loadRequestId) {
-      return;
-    }
+    if (!mounted || currentRequestId != _loadRequestId) return;
 
     if (index != null) {
-      // 获取导入版本
       for (final pkg in index.packages) {
         _lastImportedDates[pkg.id] =
             await CloudPackageService.getLastImportedVersion(pkg.id);
       }
 
-      // 再次检查请求是否仍然有效（在获取版本信息期间可能已切换）
-      if (currentRequestId != _loadRequestId) {
-        return;
-      }
+      if (!mounted || currentRequestId != _loadRequestId) return;
 
       setState(() {
         _packages = index.packages;
@@ -82,13 +80,11 @@ class _CloudPackagesScreenState extends ConsumerState<CloudPackagesScreen> {
     });
 
     try {
-      // 获取URL
       final downloadUrl = pkg.getDownloadUrl(CloudPackageService.isUsingCDN);
-      // 下载文件
       final filePath = await CloudPackageService.downloadPackage(
         downloadUrl,
         onProgress: (received, total) {
-          if (total > 0) {
+          if (total > 0 && mounted) {
             setState(() {
               _downloadProgress[pkg.id] = received / total;
             });
@@ -96,11 +92,10 @@ class _CloudPackagesScreenState extends ConsumerState<CloudPackagesScreen> {
         },
       );
       if (filePath == null) {
-        _showMessage('下载失败');
+        if (mounted) _showMessage('下载失败');
         return;
       }
 
-      // 预览选择
       if (!mounted) return;
       final result = await Navigator.push<String>(
         context,
@@ -109,24 +104,24 @@ class _CloudPackagesScreenState extends ConsumerState<CloudPackagesScreen> {
         ),
       );
 
-      // 删临时文件
       try {
         await File(filePath).delete();
       } catch (_) {}
 
       if (result != null) {
-        // 标记已导入
         await CloudPackageService.markPackageImported(pkg.id, pkg.version);
         _lastImportedDates[pkg.id] = pkg.version;
-        _showMessage(result);
+        if (mounted) _showMessage(result);
       }
     } catch (e) {
-      _showMessage('导入失败: $e');
+      if (mounted) _showMessage('导入失败: $e');
     } finally {
-      setState(() {
-        _downloadingIds.remove(pkg.id);
-        _downloadProgress.remove(pkg.id);
-      });
+      if (mounted) {
+        setState(() {
+          _downloadingIds.remove(pkg.id);
+          _downloadProgress.remove(pkg.id);
+        });
+      }
     }
   }
 
@@ -149,7 +144,6 @@ class _CloudPackagesScreenState extends ConsumerState<CloudPackagesScreen> {
   List<CloudPackage> get _filteredPackages {
     if (_packages == null) return [];
     var result = CloudPackageService.filterByMap(_packages!, _selectedMap);
-    // 搜索过滤
     if (_searchQuery.isNotEmpty) {
       final query = _searchQuery.toLowerCase();
       result = result
@@ -170,6 +164,26 @@ class _CloudPackagesScreenState extends ConsumerState<CloudPackagesScreen> {
   String _getMapDisplayName(String map) {
     if (map == 'all') return '全部地图';
     return map[0].toUpperCase() + map.substring(1);
+  }
+
+  PopupMenuItem<bool> _buildSourceMenuItem({
+    required bool value,
+    required bool isSelected,
+    required String label,
+  }) {
+    return PopupMenuItem(
+      value: value,
+      child: Row(
+        children: [
+          Icon(
+            Icons.check,
+            color: isSelected ? Colors.green : Colors.transparent,
+          ),
+          const SizedBox(width: 8),
+          Text(label),
+        ],
+      ),
+    );
   }
 
   @override
@@ -211,7 +225,6 @@ class _CloudPackagesScreenState extends ConsumerState<CloudPackagesScreen> {
           ),
         ),
         actions: [
-          // 源切换按钮
           PopupMenuButton<bool>(
             icon: Icon(
               CloudPackageService.isUsingCDN
@@ -224,35 +237,15 @@ class _CloudPackagesScreenState extends ConsumerState<CloudPackagesScreen> {
               _loadPackages();
             },
             itemBuilder: (context) => [
-              PopupMenuItem(
+              _buildSourceMenuItem(
                 value: false,
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.check,
-                      color: !CloudPackageService.isUsingCDN
-                          ? Colors.green
-                          : Colors.transparent,
-                    ),
-                    const SizedBox(width: 8),
-                    const Text('GitHub'),
-                  ],
-                ),
+                isSelected: !CloudPackageService.isUsingCDN,
+                label: 'GitHub',
               ),
-              PopupMenuItem(
+              _buildSourceMenuItem(
                 value: true,
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.check,
-                      color: CloudPackageService.isUsingCDN
-                          ? Colors.green
-                          : Colors.transparent,
-                    ),
-                    const SizedBox(width: 8),
-                    const Text('CDN 加速 (国内推荐)'),
-                  ],
-                ),
+                isSelected: CloudPackageService.isUsingCDN,
+                label: 'CDN 加速 (国内推荐)',
               ),
             ],
           ),
@@ -295,7 +288,6 @@ class _CloudPackagesScreenState extends ConsumerState<CloudPackagesScreen> {
 
     return Column(
       children: [
-        // 地图筛选
         if (_availableMaps.length > 1)
           Container(
             height: 50,
@@ -320,11 +312,11 @@ class _CloudPackagesScreenState extends ConsumerState<CloudPackagesScreen> {
               },
             ),
           ),
-        // 包列表
         Expanded(
           child: filtered.isEmpty
               ? const Center(
-                  child: Text('暂无道具包', style: TextStyle(color: Colors.grey)))
+                  child: Text('暂无道具包', style: TextStyle(color: Colors.grey)),
+                )
               : ListView.builder(
                   padding: const EdgeInsets.all(8),
                   itemCount: filtered.length,
@@ -338,7 +330,6 @@ class _CloudPackagesScreenState extends ConsumerState<CloudPackagesScreen> {
   Widget _buildPackageCard(CloudPackage pkg) {
     final isDownloading = _downloadingIds.contains(pkg.id);
     final lastImportedVersion = _lastImportedDates[pkg.id];
-    // 比较版本
     final isUpToDate = lastImportedVersion != null &&
         CloudPackageService.compareVersion(lastImportedVersion, pkg.version) >=
             0;
@@ -350,7 +341,6 @@ class _CloudPackagesScreenState extends ConsumerState<CloudPackagesScreen> {
         padding: const EdgeInsets.all(12),
         child: Row(
           children: [
-            // 地图图标
             Container(
               width: 48,
               height: 48,
@@ -370,7 +360,6 @@ class _CloudPackagesScreenState extends ConsumerState<CloudPackagesScreen> {
                   : const Icon(Icons.public, color: Colors.orange),
             ),
             const SizedBox(width: 12),
-            // 信息
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -389,7 +378,9 @@ class _CloudPackagesScreenState extends ConsumerState<CloudPackagesScreen> {
                       if (hasUpdate)
                         Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 2),
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.blue,
                             borderRadius: BorderRadius.circular(4),
@@ -424,7 +415,6 @@ class _CloudPackagesScreenState extends ConsumerState<CloudPackagesScreen> {
                 ],
               ),
             ),
-            // 下载/重新下载按钮
             if (isDownloading)
               GestureDetector(
                 onTap: () => _cancelDownload(pkg),
@@ -445,7 +435,6 @@ class _CloudPackagesScreenState extends ConsumerState<CloudPackagesScreen> {
                 ),
               )
             else ...[
-              // 已下载时显示重新下载按钮
               if (lastImportedVersion != null)
                 IconButton(
                   onPressed: () => _downloadAndImport(pkg),
@@ -455,7 +444,6 @@ class _CloudPackagesScreenState extends ConsumerState<CloudPackagesScreen> {
                   constraints:
                       const BoxConstraints(minWidth: 32, minHeight: 32),
                 ),
-              // 主按钮：下载或已是最新
               IconButton(
                 onPressed: isUpToDate ? null : () => _downloadAndImport(pkg),
                 icon: Icon(

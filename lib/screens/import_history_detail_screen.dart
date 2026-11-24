@@ -5,13 +5,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:isar_community/isar.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+
 import '../models.dart';
 import '../providers.dart';
 import '../services/data_service.dart';
-import 'grenade_detail_screen.dart';
 import '../widgets/grenade_type_icon.dart';
+import 'grenade_detail_screen.dart';
 
-/// 导入历史详情页面 - 显示某次导入的所有道具
+/// 导入历史详情页面
 class ImportHistoryDetailScreen extends ConsumerStatefulWidget {
   final int historyId;
 
@@ -46,6 +47,7 @@ class _ImportHistoryDetailScreenState
       final fallbackGrenades = linkedGrenades.isEmpty
           ? await _loadGrenadesFromOriginalPackage(history.fileName)
           : const <GrenadePreviewItem>[];
+      if (!mounted) return;
       setState(() {
         _history = history;
         _grenades = linkedGrenades;
@@ -53,12 +55,14 @@ class _ImportHistoryDetailScreenState
         _isLoading = false;
       });
     } else {
+      if (!mounted) return;
       setState(() => _isLoading = false);
     }
   }
 
   Future<List<GrenadePreviewItem>> _loadGrenadesFromOriginalPackage(
-      String fileName) async {
+    String fileName,
+  ) async {
     final packageFile = await _locateOriginalPackage(fileName);
     if (packageFile == null) return const [];
 
@@ -67,11 +71,9 @@ class _ImportHistoryDetailScreenState
       final dataService = DataService(isar);
       final preview = await dataService.previewPackage(packageFile.path);
       if (preview == null) return const [];
-      final items = preview.grenadesByMap.values
-          .expand((e) => e)
-          .toList(growable: false)
-        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
-      return items;
+      return preview.grenadesByMap.values.expand((e) => e).toList(
+            growable: false,
+          )..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     } catch (_) {
       return const [];
     }
@@ -104,25 +106,25 @@ class _ImportHistoryDetailScreenState
   Widget build(BuildContext context) {
     if (_isLoading) {
       return Scaffold(
-        appBar: AppBar(title: const Text("导入详情")),
+        appBar: AppBar(title: const Text('导入详情')),
         body: const Center(child: CircularProgressIndicator()),
       );
     }
 
     if (_history == null) {
       return Scaffold(
-        appBar: AppBar(title: const Text("导入详情")),
-        body: const Center(child: Text("记录不存在")),
+        appBar: AppBar(title: const Text('导入详情')),
+        body: const Center(child: Text('记录不存在')),
       );
     }
 
+    final hasLinked = _grenades.isNotEmpty;
+    final itemCount = hasLinked ? _grenades.length : _fallbackGrenades.length;
+
     return Scaffold(
-      appBar: AppBar(
-        title: Text(_history!.fileName),
-      ),
+      appBar: AppBar(title: Text(_history!.fileName)),
       body: Column(
         children: [
-          // 导入信息卡片
           Container(
             margin: const EdgeInsets.all(16),
             padding: const EdgeInsets.all(16),
@@ -147,15 +149,15 @@ class _ImportHistoryDetailScreenState
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
-                    _buildStatChip("新增", _history!.newCount, Colors.green),
-                    _buildStatChip("更新", _history!.updatedCount, Colors.orange),
-                    _buildStatChip("跳过", _history!.skippedCount, Colors.grey),
+                    _buildStatChip('新增', _history!.newCount, Colors.green),
+                    _buildStatChip('更新', _history!.updatedCount, Colors.orange),
+                    _buildStatChip('跳过', _history!.skippedCount, Colors.grey),
                   ],
                 ),
               ],
             ),
           ),
-          if (_grenades.isEmpty && _fallbackGrenades.isNotEmpty)
+          if (!hasLinked && _fallbackGrenades.isNotEmpty)
             Container(
               margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
               padding: const EdgeInsets.all(12),
@@ -176,72 +178,74 @@ class _ImportHistoryDetailScreenState
                 ],
               ),
             ),
-          // 道具列表
           Expanded(
-            child: _grenades.isEmpty && _fallbackGrenades.isEmpty
-                ? const Center(child: Text("没有导入的道具记录"))
-                : _grenades.isNotEmpty
-                    ? ListView.builder(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        itemCount: _grenades.length,
-                        itemBuilder: (context, index) {
-                          final grenade = _grenades[index];
-                          grenade.layer.loadSync();
-                          grenade.layer.value?.map.loadSync();
-                          final mapName =
-                              grenade.layer.value?.map.value?.name ?? "未知地图";
-
-                          return Card(
-                            margin: const EdgeInsets.only(bottom: 8),
-                            child: ListTile(
-                              leading:
-                                  GrenadeTypeIcon(type: grenade.type, size: 22),
-                              title: Text(grenade.title),
-                              subtitle: Text(mapName),
-                              trailing: const Icon(Icons.chevron_right),
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => GrenadeDetailScreen(
-                                      grenadeId: grenade.id,
-                                      isEditing: false,
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                          );
-                        },
-                      )
-                    : ListView.builder(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        itemCount: _fallbackGrenades.length,
-                        itemBuilder: (context, index) {
-                          final grenade = _fallbackGrenades[index];
-
-                          return Card(
-                            margin: const EdgeInsets.only(bottom: 8),
-                            child: ListTile(
-                              leading:
-                                  GrenadeTypeIcon(type: grenade.type, size: 22),
-                              title: Text(grenade.title),
-                              subtitle: Text(
-                                  '${grenade.mapName} / ${grenade.layerName}'),
-                              trailing: const Icon(Icons.chevron_right),
-                              onTap: () => _openFallbackGrenadeDetail(grenade),
-                            ),
-                          );
-                        },
-                      ),
+            child: itemCount == 0
+                ? const Center(child: Text('没有导入的道具记录'))
+                : ListView.builder(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    itemCount: itemCount,
+                    itemBuilder: (context, index) {
+                      if (hasLinked) {
+                        final grenade = _grenades[index];
+                        grenade.layer.loadSync();
+                        grenade.layer.value?.map.loadSync();
+                        final mapName =
+                            grenade.layer.value?.map.value?.name ?? '未知地图';
+                        return _buildGrenadeCard(
+                          type: grenade.type,
+                          title: grenade.title,
+                          subtitle: mapName,
+                          onTap: () => _openGrenadeDetail(grenade.id),
+                        );
+                      }
+                      final preview = _fallbackGrenades[index];
+                      return _buildGrenadeCard(
+                        type: preview.type,
+                        title: preview.title,
+                        subtitle: '${preview.mapName} / ${preview.layerName}',
+                        onTap: () => _openFallbackGrenadeDetail(preview),
+                      );
+                    },
+                  ),
           ),
         ],
       ),
     );
   }
 
+  Widget _buildGrenadeCard({
+    required int type,
+    required String title,
+    required String subtitle,
+    required VoidCallback onTap,
+  }) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: ListTile(
+        leading: GrenadeTypeIcon(type: type, size: 22),
+        title: Text(title),
+        subtitle: Text(subtitle),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: onTap,
+      ),
+    );
+  }
+
+  void _openGrenadeDetail(int grenadeId) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => GrenadeDetailScreen(
+          grenadeId: grenadeId,
+          isEditing: false,
+        ),
+      ),
+    );
+  }
+
   Future<void> _openFallbackGrenadeDetail(
-      GrenadePreviewItem previewItem) async {
+    GrenadePreviewItem previewItem,
+  ) async {
     final isar = ref.read(isarProvider);
     final uniqueId = previewItem.uniqueId.trim();
     if (uniqueId.isEmpty) return;
@@ -250,15 +254,7 @@ class _ImportHistoryDetailScreenState
         .where((item) => (item.uniqueId ?? '').trim() == uniqueId)
         .firstOrNull;
     if (!mounted || grenade == null) return;
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => GrenadeDetailScreen(
-          grenadeId: grenade.id,
-          isEditing: false,
-        ),
-      ),
-    );
+    _openGrenadeDetail(grenade.id);
   }
 
   Widget _buildStatChip(String label, int count, Color color) {
