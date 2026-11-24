@@ -1,295 +1,40 @@
-// ignore_for_file: use_build_context_synchronously
-
 import 'dart:async';
-import 'dart:io';
-import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:grenade_helper/models/tag.dart';
-import 'package:grenade_helper/services/settings_service.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
-import 'package:pro_image_editor/pro_image_editor.dart';
-import 'package:pro_image_editor/designs/frosted_glass/frosted_glass.dart';
-import 'package:video_player/video_player.dart';
-import 'package:chewie/chewie.dart';
-import 'package:intl/intl.dart';
-import 'package:photo_view/photo_view.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:url_launcher/url_launcher.dart';
-import 'package:pasteboard/pasteboard.dart';
-import '../widgets/grenade_type_icon.dart';
-import '../theme/app_design_system.dart';
 
+import '../main.dart' show sendOverlayCommand;
 import '../models.dart';
+import '../models/tag.dart';
 import '../providers.dart';
 import '../services/data_service.dart';
 import '../services/favorite_folder_service.dart';
-import '../services/media_handle_service.dart';
 import '../services/tag_service.dart';
-import '../widgets/instant_hide_desktop_video_controls.dart';
-import '../widgets/grenade_tag_editor.dart';
-import '../main.dart' show sendOverlayCommand;
+import '../theme/app_design_system.dart';
 import 'area_draw_screen.dart';
+import 'grenade_detail/detail_badges_and_menus.dart';
+import 'grenade_detail/detail_dialogs.dart';
+import 'grenade_detail/detail_media_helpers.dart';
+import 'grenade_detail/detail_step_widgets.dart';
 import 'impact_point_picker_screen.dart';
 
-// 视频播放组件
-class VideoPlayerWidget extends StatefulWidget {
-  final File file;
-  const VideoPlayerWidget({super.key, required this.file});
+export 'grenade_detail/video_player_widget.dart'
+    show VideoPlayerWidget, VideoPlayerWidgetState;
 
-  @override
-  State<VideoPlayerWidget> createState() => VideoPlayerWidgetState();
-}
-
-class VideoPlayerWidgetState extends State<VideoPlayerWidget> {
-  VideoPlayerController? _videoController;
-  ChewieController? _chewieController;
-  String? _errorMessage;
-  int _initGeneration = 0;
-  Future<void>? _initFuture;
-  bool _released = false;
-
-  @override
-  void initState() {
-    super.initState();
-    MediaHandleService.register(this, widget.file.path, _releaseForDeletion);
-    _initFuture = _initVideo();
-  }
-
-  @override
-  void didUpdateWidget(covariant VideoPlayerWidget oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.file.path != widget.file.path) {
-      _released = false;
-      _errorMessage = null;
-      _initGeneration++;
-      MediaHandleService.register(this, widget.file.path, _releaseForDeletion);
-      final previousInit = _initFuture;
-      _initFuture = _switchVideo(previousInit);
-    }
-  }
-
-  Future<void> _switchVideo(Future<void>? previousInit) async {
-    if (previousInit != null) {
-      try {
-        await previousInit;
-      } catch (_) {}
-    }
-    await _disposeControllersAsync();
-    if (!mounted || _released) return;
-    await _initVideo();
-  }
-
-  Future<void> _disposeControllersAsync() async {
-    final chewie = _chewieController;
-    final video = _videoController;
-    _chewieController = null;
-    _videoController = null;
-    chewie?.dispose();
-    if (video != null) {
-      await video.dispose();
-    }
-  }
-
-  Future<void> _releaseForDeletion() async {
-    _released = true;
-    _initGeneration++;
-    final pendingInit = _initFuture;
-    if (pendingInit != null) {
-      try {
-        await pendingInit;
-      } catch (_) {}
-    }
-    await _disposeControllersAsync();
-    if (mounted) setState(() {});
-  }
-
-  Future<void> _initVideo() async {
-    final generation = ++_initGeneration;
-    VideoPlayerController? controller;
-    try {
-      controller = VideoPlayerController.file(widget.file);
-      await controller.initialize();
-      if (!mounted || _released || generation != _initGeneration) {
-        await controller.dispose();
-        return;
-      }
-      _videoController = controller;
-      _chewieController = ChewieController(
-        videoPlayerController: controller,
-        autoPlay: false,
-        looping: true,
-        allowMuting: true,
-        aspectRatio: controller.value.aspectRatio,
-        customControls: SettingsService.isDesktop
-            ? const InstantHideDesktopVideoControls()
-            : null,
-        errorBuilder: (context, errorMessage) {
-          return Center(
-              child: Text(errorMessage,
-                  style: const TextStyle(color: Colors.white)));
-        },
-      );
-      setState(() {});
-    } catch (e) {
-      await controller?.dispose();
-      if (!mounted || _released || generation != _initGeneration) return;
-      _errorMessage = e.toString();
-      setState(() {});
-    }
-  }
-
-  /// 切换播放状态
-  void togglePlayPause() {
-    if (_videoController == null || !_videoController!.value.isInitialized) {
-      return;
-    }
-    if (_videoController!.value.isPlaying) {
-      _videoController!.pause();
-    } else {
-      _videoController!.play();
-    }
-  }
-
-  Future<void> pauseIfPlaying() async {
-    if (_videoController == null || !_videoController!.value.isInitialized) {
-      return;
-    }
-    if (_videoController!.value.isPlaying) {
-      await _videoController!.pause();
-    }
-  }
-
-  @override
-  void dispose() {
-    MediaHandleService.unregister(this);
-    _initGeneration++;
-    unawaited(_disposeControllersAsync());
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_released) {
-      return Container(color: Colors.black, height: 200);
-    }
-    if (_errorMessage != null) {
-      return Container(
-        color: Colors.black,
-        height: 200,
-        child: Center(
-          child:
-              Text(_errorMessage!, style: const TextStyle(color: Colors.red)),
-        ),
-      );
-    }
-
-    if (_chewieController == null) {
-      return Container(
-        color: Colors.black,
-        height: 200,
-        child: const Center(child: CircularProgressIndicator()),
-      );
-    }
-    return AspectRatio(
-      aspectRatio: _videoController!.value.aspectRatio,
-      child: Chewie(controller: _chewieController!),
-    );
-  }
-}
-
-/// 媒体来源
-enum _MediaSource { gallery, clipboard }
-
-class _GrenadeTypeMenuLabel extends StatelessWidget {
-  final int type;
-  final String label;
-
-  const _GrenadeTypeMenuLabel({required this.type, required this.label});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        GrenadeTypeIcon(type: type, size: 18),
-        const SizedBox(width: 8),
-        Text(label),
-      ],
-    );
-  }
-}
-
-class _DetailBadge extends StatelessWidget {
-  final String label;
-  final IconData? icon;
-
-  const _DetailBadge({required this.label, this.icon});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: context.appTheme.subtleBorder),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (icon != null) ...[
-            Icon(icon, size: 15, color: context.appTheme.mutedText),
-            const SizedBox(width: 5),
-          ],
-          Text(label, style: const TextStyle(fontSize: 12)),
-        ],
-      ),
-    );
-  }
-}
-
-class _GrenadeTypeBadge extends StatelessWidget {
-  final int type;
-  final String label;
-
-  const _GrenadeTypeBadge({required this.type, required this.label});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: context.appTheme.subtleBorder),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          GrenadeTypeIcon(type: type, size: 16),
-          const SizedBox(width: 6),
-          Text(label, style: const TextStyle(fontSize: 12)),
-        ],
-      ),
-    );
-  }
-}
-
-// 主页面
+/// 道具教学详情与编辑页面。
 class GrenadeDetailScreen extends ConsumerStatefulWidget {
   final int grenadeId;
   final bool isEditing;
-  // 爆点已确定，位置卡片改为设置投掷点
+  // 为 true 时表示爆点已固定，改为设置投掷点坐标
   final bool pickThrowPoint;
 
-  const GrenadeDetailScreen(
-      {super.key,
-      required this.grenadeId,
-      required this.isEditing,
-      this.pickThrowPoint = false});
+  const GrenadeDetailScreen({
+    super.key,
+    required this.grenadeId,
+    required this.isEditing,
+    this.pickThrowPoint = false,
+  });
 
   @override
   ConsumerState<GrenadeDetailScreen> createState() =>
@@ -297,12 +42,15 @@ class GrenadeDetailScreen extends ConsumerStatefulWidget {
 }
 
 class _GrenadeDetailScreenState extends ConsumerState<GrenadeDetailScreen> {
+  static const String _authorHistoryKey = 'author_history';
+
   Grenade? grenade;
   final _titleController = TextEditingController();
   final _stepScrollController = ScrollController();
   final Map<int, GlobalKey> _stepKeys = <int, GlobalKey>{};
-  String? _originalTitle; // 存原始标题
-  List<Tag>? _grenadeTags; // 缓存道具的标签
+  String? _originalTitle;
+  List<Tag>? _grenadeTags;
+  List<String> _authorHistory = [];
 
   @override
   void initState() {
@@ -325,8 +73,7 @@ class _GrenadeDetailScreenState extends ConsumerState<GrenadeDetailScreen> {
   }
 
   Future<void> _focusStep(GrenadeStep step) async {
-    final key = _stepKeys[step.id];
-    final target = key?.currentContext;
+    final target = _stepKeys[step.id]?.currentContext;
     if (target == null) return;
     await Scrollable.ensureVisible(
       target,
@@ -341,14 +88,13 @@ class _GrenadeDetailScreenState extends ConsumerState<GrenadeDetailScreen> {
     grenade = await isar.grenades.get(widget.grenadeId);
     if (grenade != null) {
       grenade!.steps.loadSync();
-      for (var step in grenade!.steps) {
+      for (final step in grenade!.steps) {
         step.medias.loadSync();
       }
       if (resetTitle) {
         _titleController.text = grenade!.title;
-        _originalTitle = grenade!.title; // 存原始标题
+        _originalTitle = grenade!.title;
       }
-      // 加载标签数据
       final tagService = TagService(isar);
       _grenadeTags = await tagService.getGrenadeTags(grenade!.id);
     }
@@ -357,32 +103,22 @@ class _GrenadeDetailScreenState extends ConsumerState<GrenadeDetailScreen> {
     }
   }
 
-  /// 默认作者
-  static const String _defaultAuthor = '匿名作者';
-  static const String _authorHistoryKey = 'author_history';
-  List<String> _authorHistory = [];
-
-  /// 加载历史
   Future<void> _loadAuthorHistory() async {
     final prefs = await SharedPreferences.getInstance();
     _authorHistory = prefs.getStringList(_authorHistoryKey) ?? [];
   }
 
-  /// 保存历史
   Future<void> _saveAuthorToHistory(String author) async {
     if (author.isEmpty) return;
     final prefs = await SharedPreferences.getInstance();
-    // 更新历史
     _authorHistory.remove(author);
     _authorHistory.insert(0, author);
-    // 保留10个
     if (_authorHistory.length > 10) {
       _authorHistory = _authorHistory.sublist(0, 10);
     }
     await prefs.setStringList(_authorHistoryKey, _authorHistory);
   }
 
-  /// 标记道具已进行本地实质性编辑
   Future<void> _markAsLocallyEdited() async {
     if (grenade == null) return;
     final isar = ref.read(isarProvider);
@@ -401,19 +137,20 @@ class _GrenadeDetailScreenState extends ConsumerState<GrenadeDetailScreen> {
     }
   }
 
-  void _updateGrenade(
-      {String? title,
-      int? type,
-      int? team,
-      String? author,
-      String? sourceUrl,
-      String? sourceNote}) async {
+  Future<void> _updateGrenade({
+    String? title,
+    int? type,
+    int? team,
+    String? author,
+    String? sourceUrl,
+    String? sourceNote,
+  }) async {
     if (grenade == null) return;
     final isar = ref.read(isarProvider);
 
     if (title != null) {
       grenade!.title = title;
-      _originalTitle = title; // 更新原始标题
+      _originalTitle = title;
     }
     if (type != null) grenade!.type = type;
     if (team != null) grenade!.team = team;
@@ -430,7 +167,22 @@ class _GrenadeDetailScreenState extends ConsumerState<GrenadeDetailScreen> {
       await isar.grenades.put(grenade!);
     });
     await _markAsLocallyEdited();
-    _loadData(resetTitle: false);
+    await _loadData(resetTitle: false);
+  }
+
+  Future<MapLayer?> _loadGrenadeLayer() async {
+    if (grenade == null) return null;
+    await grenade!.layer.load();
+    final layer = grenade!.layer.value;
+    if (layer == null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('无法获取楼层信息'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+    }
+    return layer;
   }
 
   Future<int?> _resolveMapId() async {
@@ -442,110 +194,13 @@ class _GrenadeDetailScreenState extends ConsumerState<GrenadeDetailScreen> {
     return layer.map.value?.id;
   }
 
-  Future<String?> _showFolderNameInputDialog() async {
-    final controller = TextEditingController();
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('新建收藏夹'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(hintText: '输入收藏夹名称'),
-          onSubmitted: (_) => Navigator.pop(ctx, true),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('取消')),
-          ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('创建')),
-        ],
-      ),
-    );
-    if (ok != true) return null;
-    return controller.text.trim();
-  }
-
-  Future<int?> _showFavoriteFolderPicker(
-      FavoriteFolderService folderService, int mapId) async {
-    var folders = await folderService.getFoldersByMap(mapId);
-    if (folders.isEmpty) {
-      await folderService.getOrCreateDefaultFolder(mapId);
-      folders = await folderService.getFoldersByMap(mapId);
-    }
-    if (folders.isEmpty) return null;
-
-    int? selectedFolderId = folders.first.id;
-    return showDialog<int>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: const Text('选择收藏夹'),
-          content: SizedBox(
-            width: 360,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ...folders.map((f) => ListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(
-                        selectedFolderId == f.id
-                            ? Icons.radio_button_checked
-                            : Icons.radio_button_unchecked,
-                        size: 20,
-                        color: selectedFolderId == f.id
-                            ? Theme.of(ctx).colorScheme.primary
-                            : Theme.of(ctx).disabledColor,
-                      ),
-                      title: Text(f.name, overflow: TextOverflow.ellipsis),
-                      onTap: () =>
-                          setDialogState(() => selectedFolderId = f.id),
-                    )),
-                const SizedBox(height: 8),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: TextButton.icon(
-                    onPressed: () async {
-                      final name = await _showFolderNameInputDialog();
-                      if (name == null || name.isEmpty) return;
-                      try {
-                        final created =
-                            await folderService.createFolder(mapId, name);
-                        folders = await folderService.getFoldersByMap(mapId);
-                        setDialogState(() {
-                          selectedFolderId = created.id;
-                        });
-                      } catch (e) {
-                        if (!mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('创建失败：$e')),
-                        );
-                      }
-                    },
-                    icon: const Icon(Icons.create_new_folder_outlined),
-                    label: const Text('新建收藏夹'),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(ctx, null),
-                child: const Text('取消')),
-            ElevatedButton(
-              onPressed: selectedFolderId == null
-                  ? null
-                  : () => Navigator.pop(ctx, selectedFolderId),
-              child: const Text('确定'),
-            ),
-          ],
-        ),
-      ),
-    );
+  int? _resolveMapIdSync() {
+    if (grenade == null) return null;
+    grenade!.layer.loadSync();
+    final layer = grenade!.layer.value;
+    if (layer == null) return null;
+    layer.map.loadSync();
+    return layer.map.value?.id;
   }
 
   Future<void> _handleFavoriteAction() async {
@@ -556,33 +211,45 @@ class _GrenadeDetailScreenState extends ConsumerState<GrenadeDetailScreen> {
     if (grenade!.isFavorite) {
       await folderService.setFavorite(grenade!.id, favorite: false);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('已取消收藏'), duration: Duration(seconds: 1)));
-      _loadData(resetTitle: false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('已取消收藏'), duration: Duration(seconds: 1)),
+      );
+      await _loadData(resetTitle: false);
       return;
     }
 
     final mapId = await _resolveMapId();
     if (mapId == null) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('无法识别当前地图'), duration: Duration(seconds: 1)));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('无法识别当前地图'),
+          duration: Duration(seconds: 1),
+        ),
+      );
       return;
     }
+    if (!mounted) return;
 
-    final folderId = await _showFavoriteFolderPicker(folderService, mapId);
+    final folderId = await showFavoriteFolderPickerDialog(
+      context,
+      folderService: folderService,
+      mapId: mapId,
+    );
     if (folderId == null) return;
 
-    await folderService.setFavorite(grenade!.id,
-        favorite: true, folderId: folderId);
+    await folderService.setFavorite(
+      grenade!.id,
+      favorite: true,
+      folderId: folderId,
+    );
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('已加入收藏夹'), duration: Duration(seconds: 1)),
     );
-    _loadData(resetTitle: false);
+    await _loadData(resetTitle: false);
   }
 
-  /// 更新爆点
   Future<void> _updateImpactPoint(double? x, double? y) async {
     if (grenade == null) return;
     final isar = ref.read(isarProvider);
@@ -596,26 +263,42 @@ class _GrenadeDetailScreenState extends ConsumerState<GrenadeDetailScreen> {
     });
 
     await _markAsLocallyEdited();
-    _loadData(resetTitle: false);
+    await _loadData(resetTitle: false);
     sendOverlayCommand('reload_data');
   }
 
-  /// 选择投掷点（爆点固定）
+  Future<void> _viewImpactPoint() async {
+    if (grenade == null) return;
+    final layer = await _loadGrenadeLayer();
+    if (layer == null || !mounted) return;
+    final isWallbang = grenade!.type == GrenadeType.wallbang;
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ImpactPointPickerScreen(
+          grenadeId: grenade!.id,
+          initialX: grenade!.impactXRatio,
+          initialY: grenade!.impactYRatio,
+          throwX: grenade!.xRatio,
+          throwY: grenade!.yRatio,
+          layerId: layer.id,
+          readOnly: true,
+          existingStrokes: isWallbang ? null : grenade!.impactAreaStrokes,
+          grenadeType: grenade!.type,
+          wallbangLineMode: isWallbang,
+        ),
+      ),
+    );
+  }
+
   Future<void> _pickThrowPoint() async {
     if (grenade == null ||
         grenade!.impactXRatio == null ||
         grenade!.impactYRatio == null) {
       return;
     }
-    await grenade!.layer.load();
-    final layer = grenade!.layer.value;
-    if (layer == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('无法获取楼层信息'), duration: Duration(seconds: 1)),
-      );
-      return;
-    }
+    final layer = await _loadGrenadeLayer();
+    if (layer == null || !mounted) return;
 
     final result = await Navigator.push<Offset>(
       context,
@@ -632,8 +315,8 @@ class _GrenadeDetailScreenState extends ConsumerState<GrenadeDetailScreen> {
         ),
       ),
     );
-
     if (result == null) return;
+
     final isar = ref.read(isarProvider);
     grenade!.xRatio = result.dx;
     grenade!.yRatio = result.dy;
@@ -642,7 +325,7 @@ class _GrenadeDetailScreenState extends ConsumerState<GrenadeDetailScreen> {
       await isar.grenades.put(grenade!);
     });
     await _markAsLocallyEdited();
-    _loadData(resetTitle: false);
+    await _loadData(resetTitle: false);
     sendOverlayCommand('reload_data');
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -654,21 +337,11 @@ class _GrenadeDetailScreenState extends ConsumerState<GrenadeDetailScreen> {
     );
   }
 
-  /// 选择爆点/穿线方位
   Future<void> _pickImpactPoint() async {
     if (grenade == null) return;
     final isWallbang = grenade!.type == GrenadeType.wallbang;
-
-    // 获取楼层
-    await grenade!.layer.load();
-    final layer = grenade!.layer.value;
-    if (layer == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('无法获取楼层信息'), duration: Duration(seconds: 1)),
-      );
-      return;
-    }
+    final layer = await _loadGrenadeLayer();
+    if (layer == null || !mounted) return;
 
     final result = await Navigator.push<Offset>(
       context,
@@ -686,200 +359,128 @@ class _GrenadeDetailScreenState extends ConsumerState<GrenadeDetailScreen> {
       ),
     );
 
-    if (result != null) {
-      await _updateImpactPoint(result.dx, result.dy);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(isWallbang ? '✓ 穿线方位已设置' : '✓ 爆点已设置'),
-          backgroundColor: Colors.green,
-          duration: const Duration(seconds: 1),
-        ),
-      );
-    }
+    if (result == null) return;
+    await _updateImpactPoint(result.dx, result.dy);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(isWallbang ? '✓ 穿线方位已设置' : '✓ 爆点已设置'),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 1),
+      ),
+    );
   }
 
-  /// 清除爆点/穿线
+  Future<void> _drawImpactArea() async {
+    if (grenade == null) return;
+    final layer = await _loadGrenadeLayer();
+    if (layer == null || !mounted) return;
+
+    final result = await Navigator.push<Map<String, dynamic>>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AreaDrawScreen.impactArea(
+          layer: layer,
+          impactX: grenade!.impactXRatio,
+          impactY: grenade!.impactYRatio,
+          existingStrokes: grenade!.impactAreaStrokes,
+          grenadeType: grenade!.type,
+        ),
+      ),
+    );
+
+    if (result == null || result['strokes'] == null) return;
+    final isar = ref.read(isarProvider);
+    final newStrokes = result['strokes'] as String;
+    await isar.writeTxn(() async {
+      final g = await isar.grenades.get(grenade!.id);
+      if (g != null) {
+        g.impactAreaStrokes = newStrokes;
+        g.updatedAt = DateTime.now();
+        await isar.grenades.put(g);
+      }
+    });
+    grenade!.impactAreaStrokes = newStrokes;
+    grenade!.updatedAt = DateTime.now();
+    await _markAsLocallyEdited();
+    await _loadData(resetTitle: false);
+    sendOverlayCommand('reload_data');
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('✓ 爆点区域已保存'),
+        backgroundColor: Colors.green,
+        duration: Duration(seconds: 1),
+      ),
+    );
+  }
+
   Future<void> _clearImpactPoint() async {
     if (grenade == null) return;
     final isWallbang = grenade!.type == GrenadeType.wallbang;
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(isWallbang ? '清除穿线' : '清除爆点'),
-        content: Text(isWallbang ? '确定要清除已设置的穿线吗？' : '确定要清除已设置的爆点吗？'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('清除', style: TextStyle(color: Colors.red)),
-          ),
-        ],
+    final confirm = await showClearImpactPointDialog(
+      context,
+      isWallbang: isWallbang,
+    );
+    if (confirm != true) return;
+
+    final isar = ref.read(isarProvider);
+    grenade!.impactXRatio = null;
+    grenade!.impactYRatio = null;
+    grenade!.impactAreaStrokes = null;
+    grenade!.updatedAt = DateTime.now();
+
+    await isar.writeTxn(() async {
+      await isar.grenades.put(grenade!);
+    });
+
+    await _markAsLocallyEdited();
+    await _loadData(resetTitle: false);
+    sendOverlayCommand('reload_data');
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(isWallbang ? '穿线已清除' : '爆点已清除'),
+        duration: const Duration(seconds: 1),
       ),
     );
+  }
 
-    if (confirm == true) {
-      final isar = ref.read(isarProvider);
+  Future<void> _deleteGrenade() async {
+    if (grenade == null) return;
+    final confirm = await showDetailDeleteConfirmDialog(
+      context,
+      title: '确认删除',
+      content: '删除后无法恢复，确定要删除这个道具吗？',
+    );
+    if (confirm != true) return;
 
-      grenade!.impactXRatio = null;
-      grenade!.impactYRatio = null;
-      grenade!.impactAreaStrokes = null;
-      grenade!.updatedAt = DateTime.now();
+    final isar = ref.read(isarProvider);
+    await DataService(isar).deleteGrenades([grenade!]);
+    sendOverlayCommand('reload_data');
+    if (mounted) Navigator.pop(context);
+  }
 
-      await isar.writeTxn(() async {
-        await isar.grenades.put(grenade!);
-      });
-
-      await _markAsLocallyEdited();
-      _loadData(resetTitle: false);
-      sendOverlayCommand('reload_data');
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(isWallbang ? '穿线已清除' : '爆点已清除'),
-          duration: const Duration(seconds: 1),
-        ),
-      );
+  Future<void> _startAddStep() async {
+    final result = await showAddStepBottomSheet(context);
+    if (result == null || !mounted) return;
+    switch (result.action) {
+      case AddStepAction.textOnly:
+        await _saveStep(result.title, result.description);
+      case AddStepAction.withImage:
+        await _pickMediaForNewStep(result.title, result.description, true);
+      case AddStepAction.withVideo:
+        await _pickMediaForNewStep(result.title, result.description, false);
     }
   }
 
-  void _deleteGrenade() {
-    showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-              title: const Text("确认删除"),
-              content: const Text("删除后无法恢复，确定要删除这个道具吗？"),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    child: const Text("取消")),
-                TextButton(
-                  onPressed: () async {
-                    final isar = ref.read(isarProvider);
-                    final dataService = DataService(isar);
-                    await dataService.deleteGrenades([grenade!]);
-                    sendOverlayCommand('reload_data');
-                    if (ctx.mounted) Navigator.pop(ctx);
-                    if (context.mounted) Navigator.pop(context);
-                  },
-                  child: const Text("删除", style: TextStyle(color: Colors.red)),
-                ),
-              ],
-            ));
-  }
-
-  void _startAddStep() {
-    final titleController = TextEditingController();
-    final descController = TextEditingController();
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(
-            bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
-            top: 20,
-            left: 20,
-            right: 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text("添加步骤",
-                style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Theme.of(ctx).textTheme.bodyLarge?.color)),
-            const SizedBox(height: 15),
-            TextField(
-              controller: titleController,
-              decoration: InputDecoration(
-                labelText: "步骤标题 (可选)",
-                hintText: "例如：站位、瞄点",
-                border: const OutlineInputBorder(),
-                filled: true,
-                fillColor: Theme.of(ctx).colorScheme.surfaceContainerHighest,
-              ),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: descController,
-              autofocus: true,
-              maxLines: 3,
-              decoration: InputDecoration(
-                labelText: "说明文字",
-                hintText: "在此输入详细操作说明...",
-                border: const OutlineInputBorder(),
-                filled: true,
-                fillColor: Theme.of(ctx).colorScheme.surfaceContainerHighest,
-              ),
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: () {
-                if (descController.text.trim().isEmpty &&
-                    titleController.text.trim().isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text("请至少输入标题或说明")));
-                  return;
-                }
-                Navigator.pop(ctx);
-                _saveStep(titleController.text, descController.text);
-              },
-              style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.grey[800],
-                  padding: const EdgeInsets.symmetric(vertical: 12)),
-              child:
-                  const Text("保存 (仅文字)", style: TextStyle(color: Colors.white)),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      _pickMediaForNewStep(
-                          titleController.text, descController.text, true);
-                    },
-                    icon: const Icon(Icons.image, color: Colors.black),
-                    label: const Text("加图并保存",
-                        style: TextStyle(
-                            color: Colors.black, fontWeight: FontWeight.bold)),
-                    style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.orange),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      _pickMediaForNewStep(
-                          titleController.text, descController.text, false);
-                    },
-                    icon: const Icon(Icons.videocam, color: Colors.white),
-                    label: const Text("加视频并保存",
-                        style: TextStyle(color: Colors.white)),
-                    style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blueAccent),
-                  ),
-                ),
-              ],
-            )
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _saveStep(String title, String desc,
-      {String? mediaPath, int? mediaType}) async {
+  Future<void> _saveStep(
+    String title,
+    String desc, {
+    String? mediaPath,
+    int? mediaType,
+  }) async {
     final isar = ref.read(isarProvider);
-
     final step = GrenadeStep(
       title: title,
       description: desc,
@@ -893,8 +494,11 @@ class _GrenadeDetailScreenState extends ConsumerState<GrenadeDetailScreen> {
         await step.grenade.save();
 
         if (mediaPath != null && mediaType != null) {
-          final media =
-              StepMedia(localPath: mediaPath, type: mediaType, sortOrder: 0);
+          final media = StepMedia(
+            localPath: mediaPath,
+            type: mediaType,
+            sortOrder: 0,
+          );
           await isar.stepMedias.put(media);
           media.step.value = step;
           await media.step.save();
@@ -914,13 +518,21 @@ class _GrenadeDetailScreenState extends ConsumerState<GrenadeDetailScreen> {
       rethrow;
     }
     await _markAsLocallyEdited();
-    _loadData(resetTitle: false);
+    await _loadData(resetTitle: false);
     sendOverlayCommand('reload_data');
   }
 
   Future<void> _pickMediaForNewStep(
-      String title, String desc, bool isImage) async {
-    final path = await _pickAndProcessMedia(isImage);
+    String title,
+    String desc,
+    bool isImage,
+  ) async {
+    final dataPath = ref.read(isarProvider).directory ?? '';
+    final path = await pickAndProcessDetailMedia(
+      context,
+      dataPath: dataPath,
+      isImage: isImage,
+    );
     if (path == null) return;
     if (!mounted) {
       await DataService.deleteMediaFile(path);
@@ -935,13 +547,18 @@ class _GrenadeDetailScreenState extends ConsumerState<GrenadeDetailScreen> {
   }
 
   Future<void> _appendMediaToStep(GrenadeStep step, bool isImage) async {
-    final path = await _pickAndProcessMedia(isImage);
+    final isar = ref.read(isarProvider);
+    final path = await pickAndProcessDetailMedia(
+      context,
+      dataPath: isar.directory ?? '',
+      isImage: isImage,
+    );
     if (path == null) return;
     if (!mounted) {
       await DataService.deleteMediaFile(path);
       return;
     }
-    final isar = ref.read(isarProvider);
+
     final maxSortOrder = step.medias.isEmpty
         ? -1
         : step.medias
@@ -949,9 +566,10 @@ class _GrenadeDetailScreenState extends ConsumerState<GrenadeDetailScreen> {
             .map((m) => m.sortOrder)
             .reduce((a, b) => a > b ? a : b);
     final media = StepMedia(
-        localPath: path,
-        type: isImage ? MediaType.image : MediaType.video,
-        sortOrder: maxSortOrder + 1);
+      localPath: path,
+      type: isImage ? MediaType.image : MediaType.video,
+      sortOrder: maxSortOrder + 1,
+    );
     try {
       await isar.writeTxn(() async {
         await isar.stepMedias.put(media);
@@ -969,1642 +587,84 @@ class _GrenadeDetailScreenState extends ConsumerState<GrenadeDetailScreen> {
     sendOverlayCommand('reload_data');
   }
 
-  /// 来源选择
-  Future<_MediaSource?> _showMediaSourcePicker(bool isImage) async {
-    return showModalBottomSheet<_MediaSource>(
-      context: context,
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              isImage ? "选择图片来源" : "选择视频来源",
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Theme.of(ctx).textTheme.bodyLarge?.color,
-              ),
-            ),
-            const SizedBox(height: 20),
-            ListTile(
-              leading:
-                  const Icon(Icons.photo_library, color: Colors.blueAccent),
-              title: const Text("从图库选择"),
-              onTap: () => Navigator.pop(ctx, _MediaSource.gallery),
-            ),
-            ListTile(
-              leading:
-                  const Icon(Icons.content_paste, color: Colors.orangeAccent),
-              title: const Text("从剪切板粘贴"),
-              subtitle: const Text("读取已复制的媒体文件"),
-              onTap: () => Navigator.pop(ctx, _MediaSource.clipboard),
-            ),
-            const SizedBox(height: 10),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// 剪切板图片
-  Future<String?> _processImageFromClipboard(String dataPath) async {
-    final imageBytes = await Pasteboard.image;
-
-    File? tempFile;
-    var createdTempFile = false;
-    if (imageBytes != null && imageBytes.isNotEmpty) {
-      final tempDir = await getTemporaryDirectory();
-      final tempPath = p.join(
-        tempDir.path,
-        "_clipboard_temp_${DateTime.now().millisecondsSinceEpoch}.png",
-      );
-      tempFile = File(tempPath);
-      await tempFile.writeAsBytes(imageBytes);
-      createdTempFile = true;
-    } else {
-      final files = await Pasteboard.files();
-      if (files.isNotEmpty) {
-        for (final filePath in files) {
-          final ext = p.extension(filePath).toLowerCase();
-          if (DataService.trackedImageExtensions.contains(ext) &&
-              ext != '.svg') {
-            tempFile = File(filePath);
-            break;
-          }
-        }
-      }
-    }
-
-    if (tempFile == null || !tempFile.existsSync()) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("剪切板中没有找到图片")),
-        );
-      }
-      return null;
-    }
-
-    String? resultPath;
-    try {
-      if (!mounted) return null;
-      await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => ProImageEditor.file(
-            tempFile!,
-            callbacks: ProImageEditorCallbacks(
-              onImageEditingComplete: (Uint8List bytes) async {
-                final fileName = "${DateTime.now().millisecondsSinceEpoch}.jpg";
-                final savePath = p.join(dataPath, fileName);
-                await File(savePath).writeAsBytes(bytes);
-                resultPath = savePath;
-                if (mounted) Navigator.pop(context);
-              },
-            ),
-            configs: _buildImageEditorConfigs(),
-          ),
-        ),
-      );
-    } finally {
-      if (createdTempFile) {
-        await DataService.deleteMediaFile(tempFile.path);
-      }
-    }
-
-    return resultPath;
-  }
-
-  /// 剪切板视频
-  Future<String?> _processVideoFromClipboard(String dataPath) async {
-    final files = await Pasteboard.files();
-    if (files.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("剪切板中没有找到文件")),
-        );
-      }
-      return null;
-    }
-
-    String? videoPath;
-    for (final filePath in files) {
-      final ext = p.extension(filePath).toLowerCase();
-      if (DataService.trackedVideoExtensions.contains(ext)) {
-        videoPath = filePath;
-        break;
-      }
-    }
-
-    if (videoPath == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("剪切板中没有找到视频文件")),
-        );
-      }
-      return null;
-    }
-
-    try {
-      final fileName =
-          "${DateTime.now().millisecondsSinceEpoch}${p.extension(videoPath)}";
-      final savePath = p.join(dataPath, fileName);
-      await File(videoPath).copy(savePath);
-      return savePath;
-    } catch (e) {
-      debugPrint('Video copy error: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("复制视频失败: $e")),
-        );
-      }
-      return null;
-    }
-  }
-
-  /// 编辑器配置
-  ProImageEditorConfigs _buildImageEditorConfigs() {
-    return ProImageEditorConfigs(
-      designMode: ImageEditorDesignMode.cupertino,
-      theme: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: Colors.black,
-        iconTheme: const IconThemeData(color: Colors.white),
-      ),
-      mainEditor: MainEditorConfigs(
-        tools: const [
-          SubEditorMode.paint,
-          SubEditorMode.text,
-          SubEditorMode.cropRotate,
-          SubEditorMode.tune,
-          SubEditorMode.filter,
-          SubEditorMode.blur,
-          SubEditorMode.emoji,
-        ],
-        widgets: MainEditorWidgets(
-          appBar: (editor, rebuildStream) => null,
-          bottomBar: (editor, rebuildStream, key) => null,
-          bodyItems: (editor, rebuildStream) => [
-            ReactiveWidget(
-              stream: rebuildStream,
-              builder: (_) => FrostedGlassActionBar(
-                editor: editor,
-                openStickerEditor: () {},
-              ),
-            ),
-          ],
-        ),
-      ),
-      paintEditor: PaintEditorConfigs(
-        widgets: PaintEditorWidgets(
-          appBar: (paintEditor, rebuildStream) => null,
-          bottomBar: (paintEditor, rebuildStream) => null,
-          bodyItems: (paintEditor, rebuildStream) => [
-            ReactiveWidget(
-              stream: rebuildStream,
-              builder: (_) => paintEditor.isActive
-                  ? const SizedBox.shrink()
-                  : FrostedGlassPaintAppbar(paintEditor: paintEditor),
-            ),
-            ReactiveWidget(
-              stream: rebuildStream,
-              builder: (_) =>
-                  FrostedGlassPaintBottomBar(paintEditor: paintEditor),
-            ),
-          ],
-        ),
-      ),
-      textEditor: TextEditorConfigs(
-        widgets: TextEditorWidgets(
-          appBar: (textEditor, rebuildStream) => null,
-          bottomBar: (textEditor, rebuildStream) => null,
-          bodyItems: (textEditor, rebuildStream) => [
-            ReactiveWidget(
-              stream: rebuildStream,
-              builder: (_) => const FrostedGlassEffect(
-                radius: BorderRadius.zero,
-                child: SizedBox.expand(),
-              ),
-            ),
-            ReactiveWidget(
-              stream: rebuildStream,
-              builder: (_) => FrostedGlassTextAppbar(textEditor: textEditor),
-            ),
-            ReactiveWidget(
-              stream: rebuildStream,
-              builder: (_) => FrostedGlassTextBottomBar(
-                configs: textEditor.configs,
-                initColor: textEditor.primaryColor,
-                onColorChanged: (color) => textEditor.primaryColor = color,
-                selectedStyle: textEditor.selectedTextStyle,
-                onFontChange: textEditor.setTextStyle,
-              ),
-            ),
-          ],
-        ),
-      ),
-      cropRotateEditor: CropRotateEditorConfigs(
-        widgets: CropRotateEditorWidgets(
-          appBar: (cropRotateEditor, rebuildStream) => null,
-          bottomBar: (cropRotateEditor, rebuildStream) => ReactiveWidget(
-            stream: rebuildStream,
-            builder: (_) => FrostedGlassCropRotateToolbar(
-              configs: cropRotateEditor.configs,
-              onCancel: cropRotateEditor.close,
-              onRotate: cropRotateEditor.rotate,
-              onDone: cropRotateEditor.done,
-              onReset: cropRotateEditor.reset,
-              openAspectRatios: cropRotateEditor.openAspectRatioOptions,
-            ),
-          ),
-        ),
-      ),
-      filterEditor: FilterEditorConfigs(
-        widgets: FilterEditorWidgets(
-          appBar: (filterEditor, rebuildStream) => null,
-          bodyItems: (filterEditor, rebuildStream) => [
-            ReactiveWidget(
-              stream: rebuildStream,
-              builder: (_) =>
-                  FrostedGlassFilterAppbar(filterEditor: filterEditor),
-            ),
-          ],
-        ),
-      ),
-      blurEditor: BlurEditorConfigs(
-        widgets: BlurEditorWidgets(
-          appBar: (blurEditor, rebuildStream) => null,
-          bodyItems: (blurEditor, rebuildStream) => [
-            ReactiveWidget(
-              stream: rebuildStream,
-              builder: (_) => FrostedGlassBlurAppbar(blurEditor: blurEditor),
-            ),
-          ],
-        ),
-      ),
-      tuneEditor: TuneEditorConfigs(
-        widgets: TuneEditorWidgets(
-          appBar: (tuneEditor, rebuildStream) => null,
-          bottomBar: (tuneEditor, rebuildStream) => null,
-          bodyItems: (tuneEditor, rebuildStream) => [
-            ReactiveWidget(
-              stream: rebuildStream,
-              builder: (_) => FrostedGlassTuneAppbar(tuneEditor: tuneEditor),
-            ),
-            ReactiveWidget(
-              stream: rebuildStream,
-              builder: (_) => FrostedGlassTuneBottombar(tuneEditor: tuneEditor),
-            ),
-          ],
-        ),
-      ),
-      dialogConfigs: DialogConfigs(
-        widgets: DialogWidgets(
-          loadingDialog: (message, configs) => FrostedGlassLoadingDialog(
-            message: message,
-            configs: configs,
-          ),
-        ),
-      ),
-      i18n: const I18n(
-        various: I18nVarious(
-          loadingDialogMsg: '正在处理...',
-          closeEditorWarningTitle: '确认关闭',
-          closeEditorWarningMessage: '确定要关闭编辑器吗？未保存的更改将丢失',
-          closeEditorWarningConfirmBtn: '确定',
-          closeEditorWarningCancelBtn: '取消',
-        ),
-        paintEditor: I18nPaintEditor(
-          bottomNavigationBarText: '画笔',
-          freestyle: '自由线',
-          arrow: '箭头',
-          line: '直线',
-          rectangle: '矩形',
-          circle: '圆形',
-          dashLine: '虚线',
-          lineWidth: '线宽',
-          toggleFill: '填充',
-          undo: '撤销',
-          redo: '重做',
-          done: '完成',
-          back: '返回',
-        ),
-        textEditor: I18nTextEditor(
-          inputHintText: '输入文字',
-          bottomNavigationBarText: '文字',
-          done: '完成',
-          back: '返回',
-          textAlign: '对齐',
-          backgroundMode: '背景模式',
-        ),
-        cropRotateEditor: I18nCropRotateEditor(
-          bottomNavigationBarText: '裁剪',
-          rotate: '旋转',
-          ratio: '比例',
-          back: '返回',
-          done: '完成',
-          reset: '重置',
-          undo: '撤销',
-          redo: '重做',
-        ),
-        filterEditor: I18nFilterEditor(
-          bottomNavigationBarText: '滤镜',
-          back: '返回',
-          done: '完成',
-        ),
-        blurEditor: I18nBlurEditor(
-          bottomNavigationBarText: '模糊',
-          back: '返回',
-          done: '完成',
-        ),
-        tuneEditor: I18nTuneEditor(
-          bottomNavigationBarText: '调色',
-          back: '返回',
-          done: '完成',
-          brightness: '亮度',
-          contrast: '对比度',
-          saturation: '饱和度',
-          exposure: '曝光',
-          hue: '色调',
-          temperature: '色温',
-          sharpness: '锐度',
-          fade: '褪色',
-          luminance: '明度',
-        ),
-        emojiEditor: I18nEmojiEditor(
-          bottomNavigationBarText: '表情',
-        ),
-        cancel: '取消',
-        undo: '撤销',
-        redo: '重做',
-        done: '完成',
-        remove: '删除',
-      ),
-    );
-  }
-
-  Future<String?> _pickAndProcessMedia(bool isImage) async {
-    final isar = ref.read(isarProvider);
-    final dataPath = isar.directory ?? '';
-
-    // 仅在桌面端显示来源选择对话框，移动端直接从图库导入
-    final isDesktop = Platform.isWindows || Platform.isLinux;
-
-    if (isDesktop) {
-      final source = await _showMediaSourcePicker(isImage);
-      if (source == null) return null;
-
-      if (source == _MediaSource.clipboard) {
-        // 从剪切板导入
-        if (isImage) {
-          return _processImageFromClipboard(dataPath);
-        } else {
-          return _processVideoFromClipboard(dataPath);
-        }
-      }
-    }
-
-    // 从图库导入（移动端直接进入，桌面端选择图库后进入）
-
-    final picker = ImagePicker();
-
-    if (isImage) {
-      final xFile = await picker.pickImage(source: ImageSource.gallery);
-      if (xFile == null) return null;
-      if (!mounted) return null;
-
-      String? resultPath;
-      await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => ProImageEditor.file(
-            File(xFile.path),
-            callbacks: ProImageEditorCallbacks(
-              onImageEditingComplete: (Uint8List bytes) async {
-                final fileName = "${DateTime.now().millisecondsSinceEpoch}.jpg";
-                final savePath = p.join(dataPath, fileName);
-                await File(savePath).writeAsBytes(bytes);
-                resultPath = savePath;
-                if (mounted) Navigator.pop(context);
-              },
-            ),
-            configs: _buildImageEditorConfigs(),
-          ),
-        ),
-      );
-      return resultPath;
-    } else {
-      final xFile = await picker.pickVideo(source: ImageSource.gallery);
-      if (xFile == null) return null;
-      if (!mounted) return null;
-
-      try {
-        final fileName =
-            "${DateTime.now().millisecondsSinceEpoch}${p.extension(xFile.path)}";
-        final savePath = p.join(dataPath, fileName);
-        await File(xFile.path).copy(savePath);
-        return savePath;
-      } catch (e) {
-        debugPrint('Video copy error: $e');
-        return null;
-      }
-    }
-  }
-
-  // 显示全屏可缩放图片
-  void _showFullscreenImage(String imagePath) {
-    Navigator.push(
+  Future<void> _editStep(GrenadeStep step) async {
+    final result = await showEditStepBottomSheet(
       context,
-      MaterialPageRoute(
-        builder: (context) => Scaffold(
-          backgroundColor: Colors.black,
-          appBar: AppBar(
-            backgroundColor: Colors.transparent,
-            elevation: 0,
-            leading: IconButton(
-              icon: const Icon(Icons.close, color: Colors.white),
-              onPressed: () => Navigator.pop(context),
-            ),
-          ),
-          extendBodyBehindAppBar: true,
-          body: Center(
-            child: PhotoView(
-              imageProvider: FileImage(File(imagePath)),
-              minScale: PhotoViewComputedScale.contained,
-              maxScale: PhotoViewComputedScale.covered * 3,
-              backgroundDecoration: const BoxDecoration(color: Colors.black),
-            ),
-          ),
-        ),
-      ),
+      initialTitle: step.title,
+      initialDescription: step.description,
     );
-  }
+    if (result == null || !mounted) return;
 
-  // 编辑步骤文字（标题和描述）
-  void _editStep(GrenadeStep step) {
-    final titleController = TextEditingController(text: step.title);
-    final descController = TextEditingController(text: step.description);
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(
-            bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
-            top: 20,
-            left: 20,
-            right: 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text("编辑步骤",
-                style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Theme.of(ctx).textTheme.bodyLarge?.color)),
-            const SizedBox(height: 15),
-            TextField(
-              controller: titleController,
-              decoration: InputDecoration(
-                labelText: "步骤标题",
-                border: const OutlineInputBorder(),
-                filled: true,
-                fillColor: Theme.of(ctx).colorScheme.surfaceContainerHighest,
-              ),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: descController,
-              autofocus: true,
-              maxLines: 4,
-              decoration: InputDecoration(
-                labelText: "说明文字",
-                border: const OutlineInputBorder(),
-                filled: true,
-                fillColor: Theme.of(ctx).colorScheme.surfaceContainerHighest,
-              ),
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: () async {
-                final isar = ref.read(isarProvider);
-                step.title = titleController.text;
-                step.description = descController.text;
-                await isar.writeTxn(() async {
-                  await isar.grenadeSteps.put(step);
-                  grenade!.updatedAt = DateTime.now();
-                  await isar.grenades.put(grenade!);
-                });
-                await _markAsLocallyEdited(); // 编辑步骤文字算实质性编辑
-                Navigator.pop(ctx);
-                _loadData(resetTitle: false);
-                sendOverlayCommand('reload_data');
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                      content: Text("步骤已更新"),
-                      duration: Duration(milliseconds: 800)));
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.orange,
-                  padding: const EdgeInsets.symmetric(vertical: 14)),
-              child: const Text("保存修改",
-                  style: TextStyle(
-                      color: Colors.black, fontWeight: FontWeight.bold)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // 编辑图片（重新进入图片编辑器）
-  Future<void> _editImage(StepMedia media) async {
-    if (media.type != MediaType.image) return;
-
-    // 使用当前 isar 实例的目录作为数据存储目录
     final isar = ref.read(isarProvider);
-    final dataService = DataService(isar);
-    final dataPath = isar.directory ?? '';
-
-    final file = File(media.localPath);
-    if (!file.existsSync()) return;
-
+    step.title = result.title;
+    step.description = result.description;
+    await isar.writeTxn(() async {
+      await isar.grenadeSteps.put(step);
+      grenade!.updatedAt = DateTime.now();
+      await isar.grenades.put(grenade!);
+    });
+    await _markAsLocallyEdited();
+    await _loadData(resetTitle: false);
+    sendOverlayCommand('reload_data');
     if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('步骤已更新'),
+        duration: Duration(milliseconds: 800),
+      ),
+    );
+  }
 
-    await Navigator.push(
+  Future<void> _editImage(StepMedia media) async {
+    if (grenade == null) return;
+    final updated = await editDetailStepImage(
       context,
-      MaterialPageRoute(
-        builder: (context) => ProImageEditor.file(
-          file,
-          callbacks: ProImageEditorCallbacks(
-            onImageEditingComplete: (Uint8List bytes) async {
-              final previousPath = media.localPath;
-              // 保存编辑后的新文件（覆盖原文件或创建新文件）
-              final fileName = "${DateTime.now().millisecondsSinceEpoch}.jpg";
-              final savePath = p.join(dataPath, fileName);
-              await File(savePath).writeAsBytes(bytes);
-
-              final isar = ref.read(isarProvider);
-              media.localPath = savePath;
-              try {
-                await isar.writeTxn(() async {
-                  await isar.stepMedias.put(media);
-                  grenade!.updatedAt = DateTime.now();
-                  await isar.grenades.put(grenade!);
-                });
-              } catch (_) {
-                media.localPath = previousPath;
-                await DataService.deleteMediaFile(savePath);
-                rethrow;
-              }
-              if (previousPath != savePath) {
-                await dataService.deleteMediaFileIfUnused(
-                  previousPath,
-                  excludingMediaId: media.id,
-                );
-              }
-
-              if (mounted) {
-                await _markAsLocallyEdited();
-                sendOverlayCommand('reload_data');
-                Navigator.pop(context);
-                setState(() {});
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                    content: Text("图片已更新"),
-                    duration: Duration(milliseconds: 800)));
-              }
-            },
-          ),
-          configs: ProImageEditorConfigs(
-            designMode: ImageEditorDesignMode.cupertino,
-            theme: ThemeData.dark().copyWith(
-              scaffoldBackgroundColor: Colors.black,
-              iconTheme: const IconThemeData(color: Colors.white),
-            ),
-            mainEditor: MainEditorConfigs(
-              tools: const [
-                SubEditorMode.paint,
-                SubEditorMode.text,
-                SubEditorMode.cropRotate,
-                SubEditorMode.tune,
-                SubEditorMode.filter,
-                SubEditorMode.blur,
-                SubEditorMode.emoji,
-              ],
-              widgets: MainEditorWidgets(
-                appBar: (editor, rebuildStream) => null,
-                bottomBar: (editor, rebuildStream, key) => null,
-                bodyItems: (editor, rebuildStream) => [
-                  ReactiveWidget(
-                    stream: rebuildStream,
-                    builder: (_) => FrostedGlassActionBar(
-                      editor: editor,
-                      openStickerEditor: () {},
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            paintEditor: PaintEditorConfigs(
-              widgets: PaintEditorWidgets(
-                appBar: (paintEditor, rebuildStream) => null,
-                bottomBar: (paintEditor, rebuildStream) => null,
-                bodyItems: (paintEditor, rebuildStream) => [
-                  ReactiveWidget(
-                    stream: rebuildStream,
-                    builder: (_) => paintEditor.isActive
-                        ? const SizedBox.shrink()
-                        : FrostedGlassPaintAppbar(paintEditor: paintEditor),
-                  ),
-                  ReactiveWidget(
-                    stream: rebuildStream,
-                    builder: (_) =>
-                        FrostedGlassPaintBottomBar(paintEditor: paintEditor),
-                  ),
-                ],
-              ),
-            ),
-            textEditor: TextEditorConfigs(
-              widgets: TextEditorWidgets(
-                appBar: (textEditor, rebuildStream) => null,
-                bottomBar: (textEditor, rebuildStream) => null,
-                bodyItems: (textEditor, rebuildStream) => [
-                  ReactiveWidget(
-                    stream: rebuildStream,
-                    builder: (_) => const FrostedGlassEffect(
-                      radius: BorderRadius.zero,
-                      child: SizedBox.expand(),
-                    ),
-                  ),
-                  ReactiveWidget(
-                    stream: rebuildStream,
-                    builder: (_) =>
-                        FrostedGlassTextAppbar(textEditor: textEditor),
-                  ),
-                  ReactiveWidget(
-                    stream: rebuildStream,
-                    builder: (_) => FrostedGlassTextBottomBar(
-                      configs: textEditor.configs,
-                      initColor: textEditor.primaryColor,
-                      onColorChanged: (color) =>
-                          textEditor.primaryColor = color,
-                      selectedStyle: textEditor.selectedTextStyle,
-                      onFontChange: textEditor.setTextStyle,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            cropRotateEditor: CropRotateEditorConfigs(
-              widgets: CropRotateEditorWidgets(
-                appBar: (cropRotateEditor, rebuildStream) => null,
-                bottomBar: (cropRotateEditor, rebuildStream) => ReactiveWidget(
-                  stream: rebuildStream,
-                  builder: (_) => FrostedGlassCropRotateToolbar(
-                    configs: cropRotateEditor.configs,
-                    onCancel: cropRotateEditor.close,
-                    onRotate: cropRotateEditor.rotate,
-                    onDone: cropRotateEditor.done,
-                    onReset: cropRotateEditor.reset,
-                    openAspectRatios: cropRotateEditor.openAspectRatioOptions,
-                  ),
-                ),
-              ),
-            ),
-            filterEditor: FilterEditorConfigs(
-              widgets: FilterEditorWidgets(
-                appBar: (filterEditor, rebuildStream) => null,
-                bodyItems: (filterEditor, rebuildStream) => [
-                  ReactiveWidget(
-                    stream: rebuildStream,
-                    builder: (_) =>
-                        FrostedGlassFilterAppbar(filterEditor: filterEditor),
-                  ),
-                ],
-              ),
-            ),
-            blurEditor: BlurEditorConfigs(
-              widgets: BlurEditorWidgets(
-                appBar: (blurEditor, rebuildStream) => null,
-                bodyItems: (blurEditor, rebuildStream) => [
-                  ReactiveWidget(
-                    stream: rebuildStream,
-                    builder: (_) =>
-                        FrostedGlassBlurAppbar(blurEditor: blurEditor),
-                  ),
-                ],
-              ),
-            ),
-            tuneEditor: TuneEditorConfigs(
-              widgets: TuneEditorWidgets(
-                appBar: (tuneEditor, rebuildStream) => null,
-                bottomBar: (tuneEditor, rebuildStream) => null,
-                bodyItems: (tuneEditor, rebuildStream) => [
-                  ReactiveWidget(
-                    stream: rebuildStream,
-                    builder: (_) =>
-                        FrostedGlassTuneAppbar(tuneEditor: tuneEditor),
-                  ),
-                  ReactiveWidget(
-                    stream: rebuildStream,
-                    builder: (_) =>
-                        FrostedGlassTuneBottombar(tuneEditor: tuneEditor),
-                  ),
-                ],
-              ),
-            ),
-            dialogConfigs: DialogConfigs(
-              widgets: DialogWidgets(
-                loadingDialog: (message, configs) => FrostedGlassLoadingDialog(
-                  message: message,
-                  configs: configs,
-                ),
-              ),
-            ),
-            i18n: const I18n(
-              various: I18nVarious(
-                loadingDialogMsg: '正在处理...',
-                closeEditorWarningTitle: '确认关闭',
-                closeEditorWarningMessage: '确定要关闭编辑器吗？未保存的更改将丢失',
-                closeEditorWarningConfirmBtn: '确定',
-                closeEditorWarningCancelBtn: '取消',
-              ),
-              paintEditor: I18nPaintEditor(
-                bottomNavigationBarText: '画笔',
-                freestyle: '自由线',
-                arrow: '箭头',
-                line: '直线',
-                rectangle: '矩形',
-                circle: '圆形',
-                dashLine: '虚线',
-                lineWidth: '线宽',
-                toggleFill: '填充',
-                undo: '撤销',
-                redo: '重做',
-                done: '完成',
-                back: '返回',
-              ),
-              textEditor: I18nTextEditor(
-                inputHintText: '输入文字',
-                bottomNavigationBarText: '文字',
-                done: '完成',
-                back: '返回',
-                textAlign: '对齐',
-                backgroundMode: '背景模式',
-              ),
-              cropRotateEditor: I18nCropRotateEditor(
-                bottomNavigationBarText: '裁剪',
-                rotate: '旋转',
-                ratio: '比例',
-                back: '返回',
-                done: '完成',
-                reset: '重置',
-                undo: '撤销',
-                redo: '重做',
-              ),
-              filterEditor: I18nFilterEditor(
-                bottomNavigationBarText: '滤镜',
-                back: '返回',
-                done: '完成',
-              ),
-              blurEditor: I18nBlurEditor(
-                bottomNavigationBarText: '模糊',
-                back: '返回',
-                done: '完成',
-              ),
-              tuneEditor: I18nTuneEditor(
-                bottomNavigationBarText: '调色',
-                back: '返回',
-                done: '完成',
-                brightness: '亮度',
-                contrast: '对比度',
-                saturation: '饱和度',
-                exposure: '曝光',
-                hue: '色调',
-                temperature: '色温',
-                sharpness: '锐度',
-                fade: '褪色',
-                luminance: '明度',
-              ),
-              emojiEditor: I18nEmojiEditor(
-                bottomNavigationBarText: '表情',
-              ),
-              cancel: '取消',
-              undo: '撤销',
-              redo: '重做',
-              done: '完成',
-              remove: '删除',
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// 检查标题是否有未保存的修改
-  bool _hasTitleChanges() {
-    if (!widget.isEditing) return false;
-    if (_originalTitle == null) return false;
-    return _titleController.text != _originalTitle;
-  }
-
-  /// 处理返回操作，检测未保存的标题修改
-  Future<bool> _onWillPop() async {
-    if (!_hasTitleChanges()) {
-      return true; // 没有修改，允许直接返回
-    }
-
-    // 有未保存的修改，弹出确认对话框
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('标题未保存'),
-        content: const Text('您修改了道具标题但尚未保存，要如何处理？'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, 'cancel'),
-            child: const Text('继续编辑'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, 'discard'),
-            child: const Text('放弃修改', style: TextStyle(color: Colors.red)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, 'save'),
-            child: const Text('保存并退出', style: TextStyle(color: Colors.green)),
-          ),
-        ],
-      ),
-    );
-
-    if (result == 'save') {
-      _updateGrenade(title: _titleController.text);
-      return true;
-    } else if (result == 'discard') {
-      return true;
-    }
-    return false; // 取消或点击外部
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (grenade == null) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-    final isEditing = widget.isEditing;
-
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, result) async {
-        if (didPop) return;
-        final shouldPop = await _onWillPop();
-        if (shouldPop && mounted) {
-          Navigator.of(context).pop();
-        }
-      },
-      child: Scaffold(
-        appBar: AppBar(
-          title: isEditing
-              ? TextField(
-                  controller: _titleController,
-                  style: TextStyle(
-                      color: Theme.of(context).appBarTheme.foregroundColor,
-                      fontSize: 18),
-                  decoration: InputDecoration(
-                    border: InputBorder.none,
-                    hintText: "输入标题",
-                    hintStyle: TextStyle(color: Theme.of(context).hintColor),
-                    suffixIcon: IconButton(
-                      icon: const Icon(Icons.check_circle,
-                          color: Colors.greenAccent),
-                      tooltip: "保存标题",
-                      onPressed: () {
-                        FocusScope.of(context).unfocus();
-                        _updateGrenade(title: _titleController.text);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                                content: Text("标题已更新"),
-                                duration: Duration(milliseconds: 500)));
-                      },
-                    ),
-                  ),
-                  onSubmitted: (val) => _updateGrenade(title: val),
-                )
-              : Text(grenade!.title),
-          actions: [
-            IconButton(
-              icon: Icon(grenade!.isFavorite ? Icons.star : Icons.star_border,
-                  color: Colors.yellowAccent),
-              onPressed: _handleFavoriteAction,
-            ),
-            if (isEditing)
-              IconButton(
-                  icon: const Icon(Icons.delete_outline, color: Colors.red),
-                  onPressed: _deleteGrenade),
-          ],
-        ),
-        body: Column(
-          children: [
-            _buildDetailHeader(isEditing),
-            Expanded(child: _buildResponsiveStepLayout(isEditing)),
-          ],
-        ),
-        floatingActionButton: isEditing
-            ? FloatingActionButton.extended(
-                onPressed: _startAddStep,
-                icon: const Icon(Icons.add),
-                label: const Text("添加步骤"),
-                backgroundColor: Colors.orange,
-              )
-            : null,
-      ),
-    );
-  }
-
-  String _typeLabel(int type) => switch (type) {
-        GrenadeType.smoke => '烟雾弹',
-        GrenadeType.flash => '闪光弹',
-        GrenadeType.molotov => '燃烧弹',
-        GrenadeType.he => '高爆手雷',
-        GrenadeType.wallbang => '穿点',
-        _ => '道具',
-      };
-
-  String _teamLabel(int team) => switch (team) {
-        TeamType.ct => 'CT',
-        TeamType.t => 'T',
-        _ => '通用',
-      };
-
-  Widget _buildDetailHeader(bool isEditing) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 14),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        border:
-            Border(bottom: BorderSide(color: context.appTheme.subtleBorder)),
-      ),
-      child: Row(
-        children: [
-          if (isEditing)
-            Expanded(
-              child: Wrap(
-                spacing: 14,
-                runSpacing: 8,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  DropdownButton<int>(
-                    value: grenade!.type,
-                    underline: const SizedBox.shrink(),
-                    items: const [
-                      DropdownMenuItem(
-                          value: GrenadeType.smoke,
-                          child: _GrenadeTypeMenuLabel(
-                              type: GrenadeType.smoke, label: '烟雾')),
-                      DropdownMenuItem(
-                          value: GrenadeType.flash,
-                          child: _GrenadeTypeMenuLabel(
-                              type: GrenadeType.flash, label: '闪光')),
-                      DropdownMenuItem(
-                          value: GrenadeType.molotov,
-                          child: _GrenadeTypeMenuLabel(
-                              type: GrenadeType.molotov, label: '燃烧')),
-                      DropdownMenuItem(
-                          value: GrenadeType.he,
-                          child: _GrenadeTypeMenuLabel(
-                              type: GrenadeType.he, label: '手雷')),
-                      DropdownMenuItem(
-                          value: GrenadeType.wallbang,
-                          child: _GrenadeTypeMenuLabel(
-                              type: GrenadeType.wallbang, label: '穿点')),
-                    ],
-                    onChanged: (value) => _updateGrenade(type: value),
-                  ),
-                  Text('${_sortedSteps().length} 个步骤',
-                      style: TextStyle(color: context.appTheme.mutedText)),
-                ],
-              ),
-            )
-          else
-            Expanded(
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 6,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  _GrenadeTypeBadge(
-                    type: grenade!.type,
-                    label: _typeLabel(grenade!.type),
-                  ),
-                  _DetailBadge(
-                      label: _teamLabel(grenade!.team),
-                      icon: Icons.groups_outlined),
-                  _DetailBadge(
-                      label: '${_sortedSteps().length} 个步骤',
-                      icon: Icons.format_list_numbered_rounded),
-                ],
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildResponsiveStepLayout(bool isEditing) {
-    final steps = _sortedSteps();
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (constraints.maxWidth < AppBreakpoints.mobile) {
-          return Column(
-            children: [
-              if (steps.isNotEmpty)
-                SizedBox(
-                  height: 58,
-                  child: ListView.separated(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    scrollDirection: Axis.horizontal,
-                    itemCount: steps.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 8),
-                    itemBuilder: (_, index) => ActionChip(
-                      avatar: CircleAvatar(
-                          radius: 11,
-                          child: Text('${index + 1}',
-                              style: const TextStyle(fontSize: 11))),
-                      label: Text(steps[index].title.isEmpty
-                          ? '步骤 ${index + 1}'
-                          : steps[index].title),
-                      onPressed: () => _focusStep(steps[index]),
-                    ),
-                  ),
-                ),
-              Expanded(child: _buildStepList(isEditing)),
-            ],
-          );
-        }
-
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            SizedBox(
-              width: 236,
-              child: Material(
-                color: Theme.of(context).colorScheme.surface,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(18, 18, 18, 10),
-                      child: Text('教学步骤',
-                          style: Theme.of(context)
-                              .textTheme
-                              .titleSmall
-                              ?.copyWith(fontWeight: FontWeight.w800)),
-                    ),
-                    Expanded(
-                      child: ListView.builder(
-                        padding: const EdgeInsets.symmetric(horizontal: 10),
-                        itemCount: steps.length,
-                        itemBuilder: (_, index) => ListTile(
-                          dense: true,
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(6)),
-                          leading: CircleAvatar(
-                              radius: 13,
-                              backgroundColor: Theme.of(context)
-                                  .colorScheme
-                                  .primary
-                                  .withValues(alpha: 0.14),
-                              child: Text('${index + 1}',
-                                  style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w800,
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .primary))),
-                          title: Text(
-                              steps[index].title.isEmpty
-                                  ? '步骤 ${index + 1}'
-                                  : steps[index].title,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis),
-                          onTap: () => _focusStep(steps[index]),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            VerticalDivider(width: 1, color: context.appTheme.subtleBorder),
-            Expanded(child: _buildStepList(isEditing)),
-          ],
-        );
+      isar: ref.read(isarProvider),
+      grenade: grenade!,
+      media: media,
+      onCommitted: () async {
+        await _markAsLocallyEdited();
+        sendOverlayCommand('reload_data');
       },
     );
-  }
-
-  /// 构建爆点/穿线设置区域
-  Widget _buildImpactPointSection(bool isEditing) {
-    final isWallbang = grenade!.type == GrenadeType.wallbang;
-    final hasImpactPoint =
-        grenade!.impactXRatio != null && grenade!.impactYRatio != null;
-    final throwMode =
-        !isWallbang && isEditing && widget.pickThrowPoint && hasImpactPoint;
-    // 投掷点与爆点重合视为未设置
-    final hasThrowPoint = grenade!.xRatio != grenade!.impactXRatio ||
-        grenade!.yRatio != grenade!.impactYRatio;
-    final pointSet = throwMode ? hasThrowPoint : hasImpactPoint;
-    final accentColor =
-        isWallbang ? Colors.cyan : Theme.of(context).colorScheme.primary;
-    final cardIcon =
-        isWallbang ? Icons.north_east_rounded : Icons.gps_fixed_rounded;
-    final sectionTitle =
-        isWallbang ? '穿线方位' : (throwMode ? '投掷点位置' : '爆点位置');
-    final sectionSubtitle = isWallbang
-        ? (hasImpactPoint
-            ? '方位终点 (${grenade!.impactXRatio!.toStringAsFixed(3)}, ${grenade!.impactYRatio!.toStringAsFixed(3)})'
-            : '尚未设置穿线')
-        : (throwMode
-            ? (hasThrowPoint
-                ? '坐标 (${grenade!.xRatio.toStringAsFixed(3)}, ${grenade!.yRatio.toStringAsFixed(3)})'
-                : '尚未设置投掷点')
-            : (hasImpactPoint
-                ? '坐标 (${grenade!.impactXRatio!.toStringAsFixed(3)}, ${grenade!.impactYRatio!.toStringAsFixed(3)})'
-                : '尚未设置爆点'));
-    final editActionLabel = isWallbang
-        ? (hasImpactPoint ? '修改穿线' : '设置穿线')
-        : (throwMode
-            ? (hasThrowPoint ? '修改投掷点' : '设置投掷点')
-            : (hasImpactPoint ? '修改爆点' : '设置爆点'));
-    final editButtonColor = isWallbang ? Colors.cyan : Colors.purpleAccent;
-    final canClear = !throwMode &&
-        (hasImpactPoint ||
-            (!isWallbang &&
-                grenade!.impactAreaStrokes != null &&
-                grenade!.impactAreaStrokes!.isNotEmpty));
-
-    Future<void> openImpactPoint() async {
-      await grenade!.layer.load();
-      final layer = grenade!.layer.value;
-      if (layer == null) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('无法获取楼层信息')),
-          );
-        }
-        return;
-      }
-      if (!context.mounted) return;
-      await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => ImpactPointPickerScreen(
-            grenadeId: grenade!.id,
-            initialX: grenade!.impactXRatio,
-            initialY: grenade!.impactYRatio,
-            throwX: grenade!.xRatio,
-            throwY: grenade!.yRatio,
-            layerId: layer.id,
-            readOnly: true,
-            existingStrokes: isWallbang ? null : grenade!.impactAreaStrokes,
-            grenadeType: grenade!.type,
-            wallbangLineMode: isWallbang,
-          ),
-        ),
-      );
-    }
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: accentColor.withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: context.appTheme.subtleBorder),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: accentColor.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(7),
-                ),
-                child: Icon(cardIcon, size: 19, color: accentColor),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(sectionTitle,
-                        style: const TextStyle(fontWeight: FontWeight.w700)),
-                    const SizedBox(height: 2),
-                    Text(
-                      sectionSubtitle,
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodySmall
-                          ?.copyWith(color: context.appTheme.mutedText),
-                    ),
-                  ],
-                ),
-              ),
-              if (pointSet)
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.green.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: const Text('已设置',
-                      style: TextStyle(
-                          color: Colors.green,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700)),
-                ),
-              if (!isEditing && hasImpactPoint) ...[
-                const SizedBox(width: 8),
-                OutlinedButton.icon(
-                  onPressed: openImpactPoint,
-                  icon: const Icon(Icons.visibility_outlined, size: 17),
-                  label: const Text('查看'),
-                ),
-              ],
-            ],
-          ),
-          // 编辑模式：显示修改/清除/绘制按钮
-          if (isEditing) ...[
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: throwMode ? _pickThrowPoint : _pickImpactPoint,
-                    icon: Icon(
-                      isWallbang
-                          ? Icons.north_east_rounded
-                          : (pointSet ? Icons.edit_location : Icons.add_location),
-                      size: 18,
-                    ),
-                    label: Text(editActionLabel),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: editButtonColor,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                  ),
-                ),
-                if (canClear) ...[
-                  const SizedBox(width: 8),
-                  OutlinedButton.icon(
-                    onPressed: _clearImpactPoint,
-                    icon: const Icon(Icons.clear, size: 18),
-                    label: const Text('清除'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.red,
-                      side: const BorderSide(color: Colors.red),
-                      padding: const EdgeInsets.symmetric(
-                          vertical: 10, horizontal: 12),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-            if (grenade!.type == GrenadeType.smoke ||
-                grenade!.type == GrenadeType.molotov) ...[
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: hasImpactPoint
-                      ? () async {
-                          await grenade!.layer.load();
-                          final layer = grenade!.layer.value;
-                          if (layer == null) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('无法获取楼层信息')),
-                            );
-                            return;
-                          }
-
-                          final result =
-                              await Navigator.push<Map<String, dynamic>>(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => AreaDrawScreen.impactArea(
-                                layer: layer,
-                                impactX: grenade!.impactXRatio,
-                                impactY: grenade!.impactYRatio,
-                                existingStrokes: grenade!.impactAreaStrokes,
-                                grenadeType: grenade!.type,
-                              ),
-                            ),
-                          );
-
-                          if (result != null && result['strokes'] != null) {
-                            final isar = ref.read(isarProvider);
-                            final newStrokes = result['strokes'] as String;
-                            await isar.writeTxn(() async {
-                              final g = await isar.grenades.get(grenade!.id);
-                              if (g != null) {
-                                g.impactAreaStrokes = newStrokes;
-                                g.updatedAt = DateTime.now();
-                                await isar.grenades.put(g);
-                              }
-                            });
-                            grenade!.impactAreaStrokes = newStrokes;
-                            grenade!.updatedAt = DateTime.now();
-                            await _markAsLocallyEdited();
-                            await _loadData(resetTitle: false);
-                            sendOverlayCommand('reload_data');
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('✓ 爆点区域已保存'),
-                                backgroundColor: Colors.green,
-                                duration: Duration(seconds: 1),
-                              ),
-                            );
-                          }
-                        }
-                      : null,
-                  icon: const Icon(Icons.brush, size: 18),
-                  label: Text(hasImpactPoint ? '绘制爆点范围' : '请先设置爆点位置'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor:
-                        hasImpactPoint ? Colors.pinkAccent : Colors.grey,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ],
-        ],
+    if (!updated || !mounted) return;
+    setState(() {});
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('图片已更新'),
+        duration: Duration(milliseconds: 800),
       ),
     );
   }
 
-  /// 构建标签编辑区域
-  Widget _buildTagSection(bool isEditing) {
-    if (grenade == null) return const SizedBox.shrink();
+  Future<void> _confirmDeleteMedia(StepMedia media) async {
+    final confirm = await showDetailDeleteConfirmDialog(
+      context,
+      title: '确认删除',
+      content: media.type == MediaType.image ? '确定要删除这张图片吗？' : '确定要删除这个视频吗？',
+    );
+    if (confirm != true) return;
+
     final isar = ref.read(isarProvider);
-    final tagService = TagService(isar);
-    grenade!.layer.loadSync();
-    final layer = grenade!.layer.value;
-    if (layer == null) return const SizedBox.shrink();
-    layer.map.loadSync();
-    final map = layer.map.value;
-    if (map == null) return const SizedBox.shrink();
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-            color: Colors.blueAccent.withValues(alpha: 0.3), width: 1),
-      ),
-      child: isEditing
-          ? GrenadeTagEditor(
-              grenadeId: grenade!.id,
-              mapId: map.id,
-              tagService: tagService,
-              onTagsChanged: () {
-                _loadData(resetTitle: false);
-                sendOverlayCommand('reload_data');
-              },
-            )
-          : Builder(
-              builder: (context) {
-                // 使用缓存的标签数据
-                final tags = _grenadeTags ?? const <Tag>[];
-                if (tags.isEmpty) {
-                  return const Text(
-                    '未绑定标签',
-                    style: TextStyle(color: Colors.grey, fontSize: 12),
-                  );
-                }
-
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      '标签',
-                      style:
-                          TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                    ),
-                    const SizedBox(height: 8),
-                    GrenadeTagDisplay(tags: tags),
-                  ],
-                );
-              },
-            ),
-    );
+    await DataService(isar).deleteStepMedia(media);
+    await _markAsLocallyEdited();
+    await _loadData(resetTitle: false);
+    sendOverlayCommand('reload_data');
   }
 
-  Widget _buildStepList(bool isEditing) {
-    final steps = _sortedSteps();
-    final hasImpactPoint =
-        grenade!.impactXRatio != null && grenade!.impactYRatio != null;
-    final showImpactCard = isEditing || hasImpactPoint;
-
-    if (steps.isEmpty && !showImpactCard) {
-      return const Center(
-          child: Text("暂无教学步骤", style: TextStyle(color: Colors.grey)));
-    }
-
-    return ListView(
-      controller: _stepScrollController,
-      padding: const EdgeInsets.all(16),
-      children: [
-        if (showImpactCard) _buildImpactPointSection(isEditing),
-        _buildTagSection(isEditing),
-        ...steps.map((step) => KeyedSubtree(
-              key: _stepKeys.putIfAbsent(step.id, GlobalKey.new),
-              child: _buildStepCard(step, isEditing),
-            )),
-        _buildFooterInfo(),
-      ],
-    );
+  Future<void> _deleteStep(GrenadeStep step) async {
+    final isar = ref.read(isarProvider);
+    await DataService(isar).deleteStep(step);
+    await _markAsLocallyEdited();
+    await _loadData(resetTitle: false);
+    sendOverlayCommand('reload_data');
   }
 
-  // 构建单个媒体项（图片或视频）
-  Widget _buildMediaItem(StepMedia media, bool isEditing,
-      {int? mediaIndex, int? totalMediaCount, GrenadeStep? step}) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 左侧排序按钮（仅编辑模式且有多个媒体时显示）
-          if (isEditing && totalMediaCount != null && totalMediaCount > 1)
-            Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // 上移按钮
-                IconButton(
-                  icon: Icon(
-                    Icons.arrow_upward,
-                    size: 20,
-                    color: (mediaIndex != null && mediaIndex > 0)
-                        ? Colors.blueAccent
-                        : Colors.grey[600],
-                  ),
-                  onPressed: (mediaIndex != null &&
-                          mediaIndex > 0 &&
-                          step != null)
-                      ? () => _swapMediaOrder(step, mediaIndex, mediaIndex - 1)
-                      : null,
-                  tooltip: '上移',
-                  padding: EdgeInsets.zero,
-                  constraints:
-                      const BoxConstraints(minWidth: 36, minHeight: 36),
-                ),
-                // 下移按钮
-                IconButton(
-                  icon: Icon(
-                    Icons.arrow_downward,
-                    size: 20,
-                    color:
-                        (mediaIndex != null && mediaIndex < totalMediaCount - 1)
-                            ? Colors.blueAccent
-                            : Colors.grey[600],
-                  ),
-                  onPressed: (mediaIndex != null &&
-                          mediaIndex < totalMediaCount - 1 &&
-                          step != null)
-                      ? () => _swapMediaOrder(step, mediaIndex, mediaIndex + 1)
-                      : null,
-                  tooltip: '下移',
-                  padding: EdgeInsets.zero,
-                  constraints:
-                      const BoxConstraints(minWidth: 36, minHeight: 36),
-                ),
-              ],
-            ),
-          // 媒体内容
-          Expanded(
-            child: Stack(
-              children: [
-                AspectRatio(
-                  aspectRatio: 16 / 9,
-                  child: media.type == MediaType.image
-                      ? GestureDetector(
-                          onTap: () => _showFullscreenImage(media.localPath),
-                          child: Image.file(
-                            File(media.localPath),
-                            fit: BoxFit.contain,
-                            width: double.infinity,
-                          ),
-                        )
-                      : VideoPlayerWidget(
-                          key: ValueKey('video_${media.id}_${media.localPath}'),
-                          file: File(media.localPath),
-                        ),
-                ),
-                if (isEditing) ...[
-                  // 编辑图片按钮
-                  if (media.type == MediaType.image)
-                    Positioned(
-                      top: 5,
-                      right: 40,
-                      child: GestureDetector(
-                        onTap: () => _editImage(media),
-                        child: Container(
-                          width: 28,
-                          height: 28,
-                          decoration: const BoxDecoration(
-                            color: Colors.black54,
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(Icons.edit,
-                              size: 14, color: Colors.orangeAccent),
-                        ),
-                      ),
-                    ),
-                  // 删除按钮
-                  Positioned(
-                    top: 5,
-                    right: 5,
-                    child: GestureDetector(
-                      onTap: () => _confirmDeleteMedia(media),
-                      child: Container(
-                        width: 28,
-                        height: 28,
-                        decoration: const BoxDecoration(
-                          color: Colors.black54,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(Icons.delete,
-                            size: 14, color: Colors.redAccent),
-                      ),
-                    ),
-                  ),
-                ]
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 确认删除媒体
-  void _confirmDeleteMedia(StepMedia media) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('确认删除'),
-        content:
-            Text(media.type == MediaType.image ? '确定要删除这张图片吗？' : '确定要删除这个视频吗？'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              final isar = ref.read(isarProvider);
-              final dataService = DataService(isar);
-              await dataService.deleteStepMedia(media);
-              await _markAsLocallyEdited();
-              _loadData(resetTitle: false);
-              sendOverlayCommand('reload_data');
-            },
-            child: const Text('删除', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 交换媒体顺序
   Future<void> _swapMediaOrder(
-      GrenadeStep step, int fromIndex, int toIndex) async {
+    GrenadeStep step,
+    int fromIndex,
+    int toIndex,
+  ) async {
     final mediaList = step.medias.toList()
       ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
 
@@ -2616,12 +676,10 @@ class _GrenadeDetailScreenState extends ConsumerState<GrenadeDetailScreen> {
     }
 
     final isar = ref.read(isarProvider);
-
-    // 如果所有媒体的 sortOrder 都相同（默认值），先重新分配
+    // 默认 sortOrder 全相同时先按当前顺序补齐索引
     final allSameSortOrder =
         mediaList.every((m) => m.sortOrder == mediaList.first.sortOrder);
     if (allSameSortOrder && mediaList.length > 1) {
-      // 重新分配 sortOrder
       for (int i = 0; i < mediaList.length; i++) {
         mediaList[i].sortOrder = i;
       }
@@ -2632,7 +690,6 @@ class _GrenadeDetailScreenState extends ConsumerState<GrenadeDetailScreen> {
       });
     }
 
-    // 现在交换 sortOrder 值
     final fromMedia = mediaList[fromIndex];
     final toMedia = mediaList[toIndex];
     final tempOrder = fromMedia.sortOrder;
@@ -2640,456 +697,235 @@ class _GrenadeDetailScreenState extends ConsumerState<GrenadeDetailScreen> {
     toMedia.sortOrder = tempOrder;
 
     await isar.writeTxn(() async {
-      // 保存更新后的媒体
       await isar.stepMedias.put(fromMedia);
       await isar.stepMedias.put(toMedia);
-
-      // 更新道具的更新时间
       grenade!.updatedAt = DateTime.now();
       await isar.grenades.put(grenade!);
     });
 
     await _markAsLocallyEdited();
-    _loadData(resetTitle: false);
+    await _loadData(resetTitle: false);
     sendOverlayCommand('reload_data');
   }
 
-  Widget _buildStepCard(GrenadeStep step, bool isEditing) {
-    return Card(
-      key: ValueKey(step.id),
-      margin: const EdgeInsets.only(bottom: 20),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-            child: Row(
-              children: [
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.primary,
-                      borderRadius: BorderRadius.circular(4)),
-                  child: Text("#${step.stepIndex + 1}",
-                      style: TextStyle(
-                          color: Theme.of(context).colorScheme.onPrimary,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12)),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                      step.title.isNotEmpty
-                          ? step.title
-                          : "步骤 ${step.stepIndex + 1}",
-                      style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                          color: Theme.of(context)
-                              .textTheme
-                              .bodyLarge
-                              ?.color
-                              ?.withValues(alpha: 0.7))),
-                ),
-                if (isEditing) ...[
-                  IconButton(
-                    icon: const Icon(Icons.edit,
-                        size: 20, color: Colors.orangeAccent),
-                    onPressed: () => _editStep(step),
-                    tooltip: "编辑步骤",
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.add_photo_alternate,
-                        size: 20, color: Colors.blueAccent),
-                    onPressed: () => _appendMediaToStep(step, true),
-                    tooltip: "追加图片",
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.video_call,
-                        size: 20, color: Colors.greenAccent),
-                    onPressed: () => _appendMediaToStep(step, false),
-                    tooltip: "追加视频",
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close, size: 20, color: Colors.red),
-                    onPressed: () async {
-                      final isar = ref.read(isarProvider);
-                      final dataService = DataService(isar);
-                      await dataService.deleteStep(step);
-                      await _markAsLocallyEdited();
-                      _loadData(resetTitle: false);
-                      sendOverlayCommand('reload_data');
-                    },
-                  ),
-                ]
-              ],
-            ),
-          ),
-          Divider(color: Theme.of(context).dividerColor),
-          if (step.medias.isNotEmpty)
-            // 图片/视频垂直排列（按 sortOrder 排序）
-            Builder(builder: (context) {
-              final sortedMedias = step.medias.toList()
-                ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
-              return Column(
-                children: [
-                  for (int i = 0; i < sortedMedias.length; i++)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: _buildMediaItem(
-                        sortedMedias[i],
-                        isEditing,
-                        mediaIndex: i,
-                        totalMediaCount: sortedMedias.length,
-                        step: step,
-                      ),
-                    ),
-                ],
-              );
-            })
-          else if (isEditing)
-            Container(
-              height: 60,
-              width: double.infinity,
-              color: Colors.black26,
-              child: const Center(
-                  child: Text("暂无媒体，点击上方按钮添加",
-                      style: TextStyle(color: Colors.grey))),
-            ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Text(
-              step.description.isEmpty ? "（暂无文字说明）" : step.description,
-              style: TextStyle(
-                  fontSize: 15,
-                  height: 1.5,
-                  color: Theme.of(context).textTheme.bodyMedium?.color),
-            ),
-          ),
-        ],
-      ),
+  Future<void> _editAuthor() async {
+    final author = await showEditAuthorBottomSheet(
+      context,
+      initialAuthor: grenade?.author ?? '',
+      authorHistory: _authorHistory,
+      defaultAuthor: defaultGrenadeAuthor,
     );
-  }
-
-  void _editAuthor() {
-    final authorController = TextEditingController(text: grenade?.author ?? '');
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setModalState) => Padding(
-          padding: EdgeInsets.only(
-              bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
-              top: 20,
-              left: 20,
-              right: 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text("编辑作者",
-                  style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Theme.of(ctx).textTheme.bodyLarge?.color)),
-              const SizedBox(height: 15),
-              // 历史作者选择
-              if (_authorHistory.isNotEmpty) ...[
-                const Text("历史作者",
-                    style: TextStyle(fontSize: 12, color: Colors.grey)),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: _authorHistory
-                      .map((author) => ActionChip(
-                            label: Text(author),
-                            onPressed: () {
-                              setModalState(() {
-                                authorController.text = author;
-                              });
-                            },
-                            backgroundColor: authorController.text == author
-                                ? Colors.orange.withValues(alpha: 0.3)
-                                : null,
-                          ))
-                      .toList(),
-                ),
-                const SizedBox(height: 15),
-              ],
-              TextField(
-                controller: authorController,
-                autofocus: true,
-                decoration: InputDecoration(
-                  labelText: "作者名",
-                  hintText: "留空则使用默认: $_defaultAuthor",
-                  border: const OutlineInputBorder(),
-                  filled: true,
-                  fillColor: Theme.of(ctx).colorScheme.surfaceContainerHighest,
-                ),
-                onChanged: (_) => setModalState(() {}),
-              ),
-              const SizedBox(height: 20),
-              ElevatedButton(
-                onPressed: () async {
-                  final author = authorController.text.trim();
-                  Navigator.pop(ctx);
-                  _updateGrenade(author: author);
-                  if (author.isNotEmpty) {
-                    await _saveAuthorToHistory(author);
-                  }
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                        content: Text("作者已更新"),
-                        duration: Duration(milliseconds: 800)));
-                  }
-                },
-                style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.orange,
-                    padding: const EdgeInsets.symmetric(vertical: 14)),
-                child: const Text("保存",
-                    style: TextStyle(
-                        color: Colors.black, fontWeight: FontWeight.bold)),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// 编辑原始出处
-  void _editSource() {
-    final urlController = TextEditingController(text: grenade?.sourceUrl ?? '');
-    final noteController =
-        TextEditingController(text: grenade?.sourceNote ?? '');
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) => Padding(
-        padding: EdgeInsets.only(
-            bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
-            top: 20,
-            left: 20,
-            right: 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text("编辑原始出处",
-                style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Theme.of(ctx).textTheme.bodyLarge?.color)),
-            const SizedBox(height: 8),
-            Text("记录道具的来源，方便溯源和致谢原作者",
-                style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-            const SizedBox(height: 15),
-            TextField(
-              controller: urlController,
-              decoration: InputDecoration(
-                labelText: "出处链接",
-                hintText: "输入视频/帖子链接（可选）",
-                prefixIcon: const Icon(Icons.link),
-                border: const OutlineInputBorder(),
-                filled: true,
-                fillColor: Theme.of(ctx).colorScheme.surfaceContainerHighest,
-              ),
-              keyboardType: TextInputType.url,
-            ),
-            const SizedBox(height: 15),
-            TextField(
-              controller: noteController,
-              decoration: InputDecoration(
-                labelText: "备注",
-                hintText: "例如：来源于xxx的教程（可选）",
-                prefixIcon: const Icon(Icons.notes),
-                border: const OutlineInputBorder(),
-                filled: true,
-                fillColor: Theme.of(ctx).colorScheme.surfaceContainerHighest,
-              ),
-              maxLines: 2,
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: () {
-                final url = urlController.text.trim();
-                final note = noteController.text.trim();
-                Navigator.pop(ctx);
-                _updateGrenade(sourceUrl: url, sourceNote: note);
-                if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                      content: Text("出处信息已更新"),
-                      duration: Duration(milliseconds: 800)));
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.orange,
-                  padding: const EdgeInsets.symmetric(vertical: 14)),
-              child: const Text("保存",
-                  style: TextStyle(
-                      color: Colors.black, fontWeight: FontWeight.bold)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFooterInfo() {
-    if (grenade == null) return const SizedBox();
-    final fmt = DateFormat('yyyy-MM-dd HH:mm:ss');
-    final authorText =
-        grenade!.author?.isNotEmpty == true ? grenade!.author! : _defaultAuthor;
-    final isEditing = widget.isEditing;
-
-    // 判断是否可以编辑作者名：
-    // 1. 本地创建的道具（isImported == false）始终可以编辑
-    // 2. 导入的道具（isImported == true）只有进行了本地实质性编辑后才能编辑作者
-    final canEditAuthor = !grenade!.isImported || grenade!.hasLocalEdits;
-
-    // 原始出处信息
-    final hasSource = (grenade!.sourceUrl?.isNotEmpty == true) ||
-        (grenade!.sourceNote?.isNotEmpty == true);
-    String sourceDisplayText;
-    if (hasSource) {
-      if (grenade!.sourceNote?.isNotEmpty == true) {
-        sourceDisplayText = grenade!.sourceNote!;
-      } else {
-        // 只有链接，显示简化的链接文本
-        final url = grenade!.sourceUrl!;
-        sourceDisplayText =
-            url.length > 30 ? '${url.substring(0, 30)}...' : url;
-      }
-    } else {
-      sourceDisplayText = '未设置';
+    if (author == null || !mounted) return;
+    await _updateGrenade(author: author);
+    if (author.isNotEmpty) {
+      await _saveAuthorToHistory(author);
     }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('作者已更新'),
+        duration: Duration(milliseconds: 800),
+      ),
+    );
+  }
 
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 20, top: 10),
-      child: Column(
-        children: [
-          GestureDetector(
-            onTap: isEditing
-                ? (canEditAuthor
-                    ? _editAuthor
-                    : () {
+  Future<void> _editSource() async {
+    final result = await showEditSourceBottomSheet(
+      context,
+      initialUrl: grenade?.sourceUrl ?? '',
+      initialNote: grenade?.sourceNote ?? '',
+    );
+    if (result == null || !mounted) return;
+    await _updateGrenade(sourceUrl: result.url, sourceNote: result.note);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('出处信息已更新'),
+        duration: Duration(milliseconds: 800),
+      ),
+    );
+  }
+
+  bool _hasTitleChanges() {
+    if (!widget.isEditing || _originalTitle == null) return false;
+    return _titleController.text != _originalTitle;
+  }
+
+  Future<bool> _onWillPop() async {
+    if (!_hasTitleChanges()) return true;
+    final result = await showUnsavedTitleDialog(context);
+    if (result == 'save') {
+      await _updateGrenade(title: _titleController.text);
+      return true;
+    }
+    return result == 'discard';
+  }
+
+  Future<void> _handlePopInvoked(bool didPop) async {
+    if (didPop) return;
+    final shouldPop = await _onWillPop();
+    if (shouldPop && mounted) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (grenade == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    final isEditing = widget.isEditing;
+    final steps = _sortedSteps();
+
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) => _handlePopInvoked(didPop),
+      child: Scaffold(
+        appBar: AppBar(
+          title: isEditing
+              ? TextField(
+                  controller: _titleController,
+                  style: TextStyle(
+                    color: Theme.of(context).appBarTheme.foregroundColor,
+                    fontSize: 18,
+                  ),
+                  decoration: InputDecoration(
+                    border: InputBorder.none,
+                    hintText: '输入标题',
+                    hintStyle: TextStyle(color: Theme.of(context).hintColor),
+                    suffixIcon: IconButton(
+                      icon: const Icon(
+                        Icons.check_circle,
+                        color: Colors.greenAccent,
+                      ),
+                      tooltip: '保存标题',
+                      onPressed: () {
+                        FocusScope.of(context).unfocus();
+                        _updateGrenade(title: _titleController.text);
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
-                            content: Text(
-                                "此道具为导入内容，需进行实质性编辑（修改文字、编辑图片、添加/删除媒体）后才能修改作者名"),
-                            duration: Duration(seconds: 3),
+                            content: Text('标题已更新'),
+                            duration: Duration(milliseconds: 500),
                           ),
                         );
-                      })
-                : null,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text("作者: $authorText",
-                    style: const TextStyle(color: Colors.grey, fontSize: 12)),
-                if (isEditing) ...[
-                  const SizedBox(width: 4),
-                  Icon(
-                    canEditAuthor ? Icons.edit : Icons.lock_outline,
-                    size: 12,
-                    color: canEditAuthor ? Colors.grey : Colors.grey[600],
+                      },
+                    ),
                   ),
-                ],
-              ],
+                  onSubmitted: (val) => _updateGrenade(title: val),
+                )
+              : Text(grenade!.title),
+          actions: [
+            IconButton(
+              icon: Icon(
+                grenade!.isFavorite ? Icons.star : Icons.star_border,
+                color: Colors.yellowAccent,
+              ),
+              onPressed: _handleFavoriteAction,
             ),
-          ),
-          // 原始出处栏（非编辑模式下无出处信息时隐藏）
-          if (isEditing || hasSource) ...[
-            const SizedBox(height: 4),
-            GestureDetector(
-              onTap: isEditing
-                  ? _editSource
-                  : (grenade!.sourceUrl?.isNotEmpty == true
-                      ? () async {
-                          final url = grenade!.sourceUrl!;
-                          final uri = Uri.tryParse(url);
-                          if (uri != null) {
-                            try {
-                              await launchUrl(uri,
-                                  mode: LaunchMode.externalApplication);
-                            } catch (e) {
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text("无法打开链接: $e")),
-                                );
-                              }
-                            }
-                          }
-                        }
-                      : null),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      hasSource ? Icons.link : Icons.link_off,
-                      size: 14,
-                      color:
-                          (!isEditing && grenade!.sourceUrl?.isNotEmpty == true)
-                              ? Colors.blueAccent
-                              : Colors.grey,
-                    ),
-                    const SizedBox(width: 4),
-                    Flexible(
-                      child: Text(
-                        "出处: $sourceDisplayText",
-                        style: TextStyle(
-                          color: (!isEditing &&
-                                  grenade!.sourceUrl?.isNotEmpty == true)
-                              ? Colors.blueAccent
-                              : Colors.grey,
-                          fontSize: 12,
-                          decoration: (!isEditing &&
-                                  grenade!.sourceUrl?.isNotEmpty == true)
-                              ? TextDecoration.underline
-                              : null,
-                          decorationColor: Colors.blueAccent,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                    if (isEditing) ...[
-                      const SizedBox(width: 4),
-                      const Icon(Icons.edit, size: 12, color: Colors.grey),
-                    ],
-                  ],
-                ),
+            if (isEditing)
+              IconButton(
+                icon: const Icon(Icons.delete_outline, color: Colors.red),
+                onPressed: _deleteGrenade,
+              ),
+          ],
+        ),
+        body: Column(
+          children: [
+            GrenadeDetailHeader(
+              isEditing: isEditing,
+              grenadeType: grenade!.type,
+              grenadeTeam: grenade!.team,
+              stepCount: steps.length,
+              onTypeChanged: (value) => _updateGrenade(type: value),
+            ),
+            Expanded(
+              child: GrenadeResponsiveStepLayout(
+                steps: steps,
+                onSelectStep: _focusStep,
+                content: _buildStepList(isEditing, steps),
               ),
             ),
           ],
-          const SizedBox(height: 4),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text("创建: ${fmt.format(grenade!.createdAt)}",
-                  style: const TextStyle(color: Colors.grey, fontSize: 10)),
-              const Text("  |  ",
-                  style: TextStyle(color: Colors.grey, fontSize: 10)),
-              Text("最后编辑: ${fmt.format(grenade!.updatedAt)}",
-                  style: const TextStyle(color: Colors.grey, fontSize: 10)),
-            ],
-          ),
-        ],
+        ),
+        floatingActionButton: isEditing
+            ? FloatingActionButton.extended(
+                onPressed: _startAddStep,
+                icon: const Icon(Icons.add),
+                label: const Text('添加步骤'),
+                backgroundColor: Colors.orange,
+              )
+            : null,
       ),
+    );
+  }
+
+  Widget _buildStepList(bool isEditing, List<GrenadeStep> steps) {
+    final hasImpactPoint =
+        grenade!.impactXRatio != null && grenade!.impactYRatio != null;
+    final showImpactCard = isEditing || hasImpactPoint;
+
+    if (steps.isEmpty && !showImpactCard) {
+      return const Center(
+        child: Text('暂无教学步骤', style: TextStyle(color: Colors.grey)),
+      );
+    }
+
+    final mapId = _resolveMapIdSync();
+    final tagService = TagService(ref.read(isarProvider));
+
+    return ListView(
+      controller: _stepScrollController,
+      padding: const EdgeInsets.all(16),
+      children: [
+        if (showImpactCard)
+          ImpactPointSectionCard(
+            grenade: grenade!,
+            isEditing: isEditing,
+            pickThrowPoint: widget.pickThrowPoint,
+            onViewImpactPoint: _viewImpactPoint,
+            onPickThrowPoint: _pickThrowPoint,
+            onPickImpactPoint: _pickImpactPoint,
+            onClearImpactPoint: _clearImpactPoint,
+            onDrawImpactArea: _drawImpactArea,
+          ),
+        if (mapId != null)
+          GrenadeTagSection(
+            grenadeId: grenade!.id,
+            mapId: mapId,
+            tagService: tagService,
+            isEditing: isEditing,
+            cachedTags: _grenadeTags,
+            onTagsChanged: () {
+              _loadData(resetTitle: false);
+              sendOverlayCommand('reload_data');
+            },
+          ),
+        ...steps.map(
+          (step) => KeyedSubtree(
+            key: _stepKeys.putIfAbsent(step.id, GlobalKey.new),
+            child: GrenadeStepCard(
+              step: step,
+              isEditing: isEditing,
+              onEditStep: () => _editStep(step),
+              onAddImage: () => _appendMediaToStep(step, true),
+              onAddVideo: () => _appendMediaToStep(step, false),
+              onDeleteStep: () => _deleteStep(step),
+              onSwapMediaOrder: (fromIndex, toIndex) =>
+                  _swapMediaOrder(step, fromIndex, toIndex),
+              onOpenFullscreenImage: (path) =>
+                  showFullscreenDetailImage(context, path),
+              onEditImage: _editImage,
+              onDeleteMedia: _confirmDeleteMedia,
+            ),
+          ),
+        ),
+        GrenadeDetailFooter(
+          grenade: grenade!,
+          isEditing: isEditing,
+          onEditAuthor: _editAuthor,
+          onEditSource: _editSource,
+        ),
+      ],
     );
   }
 }
